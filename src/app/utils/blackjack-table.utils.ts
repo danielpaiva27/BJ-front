@@ -90,7 +90,11 @@ function appendToTarget(state: BlackjackTableState, target: CardTarget, value: C
     return { ...state, seenCards: [...state.seenCards, value] };
   }
 
-  return { ...state, dealerRevealedCards: [...state.dealerRevealedCards, value] };
+  return {
+    ...state,
+    seenCards: [...state.seenCards, value],
+    dealerRevealedCards: [...state.dealerRevealedCards, value],
+  };
 }
 
 function removeLastFromList(values: CardValue[], value: CardValue): CardValue[] {
@@ -118,7 +122,11 @@ function removeFromTarget(state: BlackjackTableState, target: CardTarget, value:
     return { ...state, seenCards: removeLastFromList(state.seenCards, value) };
   }
 
-  return { ...state, dealerRevealedCards: removeLastFromList(state.dealerRevealedCards, value) };
+  return {
+    ...state,
+    seenCards: removeLastFromList(state.seenCards, value),
+    dealerRevealedCards: removeLastFromList(state.dealerRevealedCards, value),
+  };
 }
 
 function incrementShoeCount(shoeCounts: ShoeValueCount[], value: CardValue): ShoeValueCount[] {
@@ -132,6 +140,26 @@ function incrementShoeCount(shoeCounts: ShoeValueCount[], value: CardValue): Sho
       count: Math.min(item.initialCount, item.count + 1),
     };
   });
+}
+
+function incrementShoeCountByValue(
+  shoeCounts: ShoeValueCount[],
+  value: CardValue,
+  amount: number,
+): ShoeValueCount[] {
+  let next = shoeCounts;
+  for (let index = 0; index < amount; index += 1) {
+    next = incrementShoeCount(next, value);
+  }
+  return next;
+}
+
+function removeValueOccurrences(values: CardValue[], value: CardValue, occurrences: number): CardValue[] {
+  let next = values;
+  for (let index = 0; index < occurrences; index += 1) {
+    next = removeLastFromList(next, value);
+  }
+  return next;
 }
 
 function computeGamePhase(state: BlackjackTableState): BlackjackTableState["gamePhase"] {
@@ -215,6 +243,49 @@ export function undoLastRegisteredCard(state: BlackjackTableState): UndoCardResu
 }
 
 export function resetRound(state: BlackjackTableState): BlackjackTableState {
+  let restoredShoeCounts = state.shoeCounts;
+  const restoreCards: CardValue[] = [
+    ...state.playerCards,
+    ...(state.dealerUpcard ? [state.dealerUpcard] : []),
+    ...state.dealerRevealedCards,
+  ];
+
+  for (const cardValue of restoreCards) {
+    restoredShoeCounts = incrementShoeCount(restoredShoeCounts, cardValue);
+  }
+
+  let nextSeenCards = state.seenCards;
+  const revealedByValue = state.dealerRevealedCards.reduce<Record<CardValue, number>>(
+    (accumulator, value) => ({
+      ...accumulator,
+      [value]: (accumulator[value] ?? 0) + 1,
+    }),
+    {} as Record<CardValue, number>,
+  );
+  const revealedValues = Object.entries(revealedByValue) as Array<[CardValue, number]>;
+
+  for (const [value, occurrences] of revealedValues) {
+    nextSeenCards = removeValueOccurrences(nextSeenCards, value, occurrences);
+  }
+
+  const nextState: BlackjackTableState = {
+    ...state,
+    playerCards: [],
+    dealerUpcard: null,
+    seenCards: nextSeenCards,
+    dealerRevealedCards: [],
+    selectedTarget: "player",
+    shoeCounts: restoredShoeCounts,
+    history: state.history.filter((entry) => entry.target === "seen"),
+  };
+
+  return {
+    ...nextState,
+    gamePhase: computeGamePhase(nextState),
+  };
+}
+
+export function startNewRoundKeepingShoe(state: BlackjackTableState): BlackjackTableState {
   const nextState: BlackjackTableState = {
     ...state,
     playerCards: [],
@@ -225,7 +296,7 @@ export function resetRound(state: BlackjackTableState): BlackjackTableState {
 
   return {
     ...nextState,
-    gamePhase: computeGamePhase(nextState),
+    gamePhase: "shoe_active",
   };
 }
 
@@ -260,7 +331,7 @@ export function buildAnalyzeHandRequest(
   return {
     player_hand: state.playerCards,
     dealer_upcard: state.dealerUpcard,
-    seen_cards: [...state.seenCards, ...state.dealerRevealedCards],
+    seen_cards: state.seenCards,
     rules: options.rules,
     simulations: options.simulations,
     seed: options.seed,

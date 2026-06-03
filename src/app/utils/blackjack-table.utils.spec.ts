@@ -7,6 +7,7 @@ import {
   registerCardAction,
   resetRound,
   resetShoe,
+  startNewRoundKeepingShoe,
   undoLastRegisteredCard,
 } from "./blackjack-table.utils";
 
@@ -72,14 +73,31 @@ describe("blackjack-table.utils", () => {
     const state = createInitialTableState(1);
     const withCards = registerCardAction(state, "10", "player").state;
     const withDealer = registerCardAction(withCards, "A", "dealer_upcard").state;
+    const withRevealed = registerCardAction(withDealer, "9", "dealer_revealed").state;
 
-    const reset = resetRound(withDealer);
+    const reset = resetRound(withRevealed);
 
     expect(reset.playerCards).toEqual([]);
     expect(reset.dealerUpcard).toBeNull();
     expect(reset.dealerRevealedCards).toEqual([]);
-    expect(reset.shoeCounts.find((item) => item.value === "10")?.count).toBe(15);
-    expect(reset.shoeCounts.find((item) => item.value === "A")?.count).toBe(3);
+    expect(reset.seenCards).toEqual([]);
+    expect(reset.shoeCounts.find((item) => item.value === "10")?.count).toBe(16);
+    expect(reset.shoeCounts.find((item) => item.value === "A")?.count).toBe(4);
+    expect(reset.shoeCounts.find((item) => item.value === "9")?.count).toBe(4);
+  });
+
+  it("starts a new round keeping the depleted shoe", () => {
+    const state = createInitialTableState(1);
+    const withCards = registerCardAction(state, "10", "player").state;
+    const withDealer = registerCardAction(withCards, "A", "dealer_upcard").state;
+
+    const nextRound = startNewRoundKeepingShoe(withDealer);
+
+    expect(nextRound.playerCards).toEqual([]);
+    expect(nextRound.dealerUpcard).toBeNull();
+    expect(nextRound.shoeCounts.find((item) => item.value === "10")?.count).toBe(15);
+    expect(nextRound.shoeCounts.find((item) => item.value === "A")?.count).toBe(3);
+    expect(nextRound.gamePhase).toBe("shoe_active");
   });
 
   it("resets the entire shoe to initial state", () => {
@@ -136,6 +154,14 @@ describe("blackjack-table.utils", () => {
     expect(payload?.dealer_upcard).toBe("10");
     expect(payload?.seen_cards).toEqual(["5", "9"] as CardValue[]);
     expect(payload?.simulations).toBe(50000);
+  });
+
+  it("adds dealer_revealed cards to seen cards", () => {
+    const state = createInitialTableState(1);
+    const updated = registerCardAction(state, "8", "dealer_revealed").state;
+
+    expect(updated.dealerRevealedCards).toEqual(["8"]);
+    expect(updated.seenCards).toEqual(["8"]);
   });
 
   it("returns null payload when state is not ready", () => {
