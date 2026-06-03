@@ -158,9 +158,88 @@
         </div>
       </section>
 
-      <section class="section-card register-card">
+      <section class="section-card register-card seen-cards-card" *ngIf="showSeenCardsDefinitionCard">
         <div class="section-heading">
-          <h2>Registro de cartas</h2>
+          <h2>Definir cartas já vistas</h2>
+          <p>Use esta etapa para informar cartas que já saíram neste shoe antes da rodada atual.</p>
+        </div>
+
+        <div class="stat-item">
+          <span>Cartas já vistas registradas</span>
+          <strong>{{ tableState.seenCards.join(', ') || '-' }}</strong>
+        </div>
+
+        <div class="game-actions-grid">
+          <button type="button" class="action-button" *ngIf="showEnterSeenCardsSetup" (click)="enterSeenCardsSetup()">Definir cartas já vistas</button>
+          <button type="button" class="action-button" *ngIf="showConfirmSeenCards" (click)="confirmSeenCardsSetup()">Concluir cartas vistas</button>
+        </div>
+      </section>
+
+      <section class="section-card register-card" *ngIf="showStartHandCard">
+        <div class="section-heading">
+          <h2>Iniciar mão</h2>
+          <p>No blackjack, a aposta ocorre antes da distribuição das cartas. Esta exposição é apenas simulacional.</p>
+        </div>
+
+        <div class="section-heading">
+          <h3>Análise pré-rodada</h3>
+          <p>Execute antes de aceitar a aposta simulacional para avaliar o shoe atual.</p>
+        </div>
+
+        <div class="game-actions-grid">
+          <button type="button" class="action-button" [disabled]="!canAnalyzePreRound" (click)="analyzePreRound()">Analisar pré-rodada</button>
+          <button type="button" class="action-button" *ngIf="showEnterSeenCardsSetup" (click)="enterSeenCardsSetup()">Continuar observando</button>
+        </div>
+
+        <p class="theoretical-note" *ngIf="preRoundAnalysisNeedsRefresh">
+          Novas cartas foram registradas desde a última análise pré-rodada. Clique em Analisar pré-rodada para atualizar.
+        </p>
+
+        <div class="analysis-grid" *ngIf="preRoundAnalysis as preRound; else noPreRoundAnalysis">
+          <div class="metric-group">
+            <h3>Contagem pré-rodada</h3>
+            <p><span>Running count <app-info-tooltip termKey="runningCount" /></span><strong>{{ preRound.counting.running_count }}</strong></p>
+            <p><span>True count <app-info-tooltip termKey="trueCount" /></span><strong>{{ preRound.counting.true_count | number: '1.2-4' }}</strong></p>
+            <p><span>Cartas restantes</span><strong>{{ preRound.counting.cards_remaining }}</strong></p>
+            <p><span>Status do shoe <app-info-tooltip termKey="shoe" /></span><strong>{{ preRound.counting.deck_status }}</strong></p>
+          </div>
+
+          <div class="metric-group">
+            <h3>Exposição simulacional</h3>
+            <p><span>Perfil de risco</span><strong>{{ getRiskProfileLabel(preRound.betting.risk_profile) }}</strong></p>
+            <p><span>Unidades teóricas <app-info-tooltip termKey="theoreticalUnits" /></span><strong>{{ preRound.betting.bet_units | number: '1.2-2' }}</strong></p>
+            <p>
+              <span>Exposição teórica <app-info-tooltip termKey="theoreticalExposure" /></span>
+              <strong>Equivalente simulado <app-info-tooltip termKey="simulatedEquivalent" />: {{ preRound.betting.suggested_bet | number: '1.2-2' }}</strong>
+            </p>
+            <p><span>Limite seguro simulado</span><strong>{{ preRound.betting.max_safe_exposure | number: '1.2-2' }}</strong></p>
+            <p class="theoretical-note">{{ preRound.betting.explanation }}</p>
+          </div>
+        </div>
+
+        <ng-template #noPreRoundAnalysis>
+          <p class="theoretical-note">
+            Execute a análise pré-rodada para visualizar running count, true count, status do shoe e exposição teórica.
+          </p>
+        </ng-template>
+
+        <p class="theoretical-note" *ngIf="preRoundAnalysis as preRound">
+          {{ preRound.recommendation }}
+        </p>
+
+        <p class="theoretical-note" *ngIf="preRoundAnalysis as preRound">
+          {{ preRound.entry_advice }}
+        </p>
+
+        <div class="game-actions-grid">
+          <button type="button" class="action-button" *ngIf="showConfirmBettingDecision" (click)="confirmBettingDecision()">Aposta aceita / Iniciar mão</button>
+        </div>
+      </section>
+
+      <section class="section-card register-card" *ngIf="availableCardTargets.length > 0">
+        <div class="section-heading">
+          <h2>{{ registerPanelTitle }}</h2>
+          <p>{{ registerPanelDescription }}</p>
           <p>Destino selecionado: <strong class="selected-destination">{{ getCardTargetLabel(tableState.selectedTarget) }}</strong></p>
         </div>
 
@@ -168,7 +247,7 @@
           <button
             type="button"
             class="target-button"
-            *ngFor="let target of cardTargets"
+            *ngFor="let target of availableCardTargets"
             [class.active]="tableState.selectedTarget === target"
             (click)="selectTarget(target)"
           >
@@ -176,21 +255,20 @@
           </button>
         </div>
 
-        <div class="card-grid">
+        <div class="game-actions-grid">
           <button
             type="button"
-            class="value-card"
-            *ngFor="let item of tableState.shoeCounts"
-            [class.recent]="recentRegisteredCardValue === item.value"
-            [disabled]="item.count === 0"
-            [attr.aria-label]="'Registrar ' + item.display + ' em ' + getCardTargetLabel(tableState.selectedTarget)"
-            (click)="registerCard(item.value)"
+            class="action-button"
+            [disabled]="!canRegisterCardsInCurrentPhase"
+            (click)="openCardSelectionModal()"
           >
-            <span class="value">{{ getCardPrimaryDisplay(item.value) }}</span>
-            <span class="aux" *ngIf="getCardAuxiliaryDisplay(item.value)">{{ getCardAuxiliaryDisplay(item.value) }}</span>
-            <span class="count">Restantes <strong>{{ item.count }}</strong></span>
+            {{ currentCardRequestButtonLabel }}
           </button>
         </div>
+
+        <p class="theoretical-note" *ngIf="recentRegisteredCardValue">
+          Ultima carta registrada: <strong>{{ getCardPrimaryDisplay(recentRegisteredCardValue) }}</strong>
+        </p>
 
         <p class="registration-feedback" *ngIf="cardRegistrationFeedback">{{ cardRegistrationFeedback }}</p>
         <p class="error" *ngIf="cardRegistrationError">{{ cardRegistrationError }}</p>
@@ -200,6 +278,73 @@
         <div class="section-heading">
           <h2>Mesa atual</h2>
           <p>Use as ações abaixo para guiar o fluxo visual da rodada.</p>
+        </div>
+
+        <div class="stat-item" *ngIf="showInitialDealProgress">
+          <span>Distribuicao inicial</span>
+          <strong>{{ initialDealProgressLabel }}</strong>
+        </div>
+
+        <div class="stat-item" *ngIf="playerNaturalBlackjackDetected">
+          <span>Blackjack natural detectado</span>
+          <strong>{{ naturalBlackjackResultTitle || 'Aguardando verificacao do dealer' }}</strong>
+          <small class="theoretical-note" *ngIf="!naturalBlackjackResult">
+            Revele a carta oculta do dealer para verificar se tambem ha blackjack natural.
+          </small>
+          <small class="theoretical-note" *ngIf="naturalBlackjackResult">
+            {{ naturalBlackjackResultDescription }}
+          </small>
+        </div>
+
+        <div class="stat-item" *ngIf="showPlayerBustResultCard">
+          <span>Resultado da rodada</span>
+          <strong>Derrota do jogador por bust</strong>
+          <small class="theoretical-note">
+            {{ playerBustResultDescription }}
+          </small>
+        </div>
+
+        <div class="stat-item" *ngIf="showDoubledHandStatus">
+          <span>Status da mao</span>
+          <strong>Mao dobrada</strong>
+          <small class="theoretical-note">
+            Double realizado: o jogador recebeu uma unica carta e encerrou sua vez.
+          </small>
+        </div>
+
+        <div class="stat-item" *ngIf="showSurrenderStatus">
+          <span>Status da rodada</span>
+          <strong>Surrender aplicado</strong>
+          <small class="theoretical-note">
+            Jogador se rendeu; a rodada encerrou sem iniciar turno adicional do dealer.
+          </small>
+        </div>
+
+        <div class="stat-item" *ngIf="showNaturalBlackjackStatus">
+          <span>Status da rodada</span>
+          <strong>Blackjack natural</strong>
+          <small class="theoretical-note">
+            O desfecho desta rodada envolveu blackjack natural.
+          </small>
+        </div>
+
+        <div class="stat-item" *ngIf="showDealerHandSummary && dealerHandEvaluation as dealerHand">
+          <span>Mao atual do dealer</span>
+          <strong>{{ dealerVisibleCards.join(', ') }} · {{ dealerHand.total }} pontos ({{ dealerHand.isSoft ? 'soft' : 'hard' }})</strong>
+          <small class="theoretical-note" *ngIf="dealerHand.isBust">
+            Dealer estourou nesta rodada.
+          </small>
+        </div>
+
+        <div class="stat-item" *ngIf="showRoundResolutionCard">
+          <span>Resumo da rodada</span>
+          <strong>{{ roundResolutionTitle }}</strong>
+          <small class="theoretical-note">{{ roundResolutionDescription }}</small>
+          <small class="theoretical-note">{{ roundResolutionReasonDescription }}</small>
+          <div class="game-actions-grid">
+            <button type="button" class="action-button" (click)="startNextRound()">Nova rodada mantendo shoe atual</button>
+            <button type="button" class="action-button" (click)="resetCurrentShoe()">Novo shoe / embaralhar</button>
+          </div>
         </div>
 
         <div class="table-state-grid">
@@ -222,13 +367,40 @@
         </div>
 
         <div class="game-actions-panel">
-          <h3>Ações de jogo</h3>
-          <div class="game-actions-grid">
-            <button type="button" class="action-button" (click)="onHit()">Pedir carta</button>
-            <button type="button" class="action-button" (click)="onStand()">Parar</button>
-            <button type="button" class="action-button" (click)="onDouble()">Dobrar</button>
-            <button type="button" class="action-button" (click)="onSplit()">Dividir</button>
-            <button type="button" class="action-button" (click)="onSurrender()">Render-se</button>
+          <h3>Fluxo guiado</h3>
+
+          <p class="theoretical-note" *ngIf="currentRoundPhase === 'DEALER_REVEAL_PENDING'">
+            A vez do jogador terminou. Agora revele a carta oculta do dealer.
+          </p>
+
+          <p class="theoretical-note player-actions-context" *ngIf="currentRoundPhase === 'PLAYER_DECISION'">
+            Ranking da engine permanece probabilistico; os botoes abaixo mostram apenas acoes executaveis agora.
+          </p>
+
+          <p class="theoretical-note" *ngIf="recommendedActionUnavailableReason">
+            A engine recomenda {{ getActionLabel(recommendedAction!) }}, mas esta acao nao esta executavel agora: {{ recommendedActionUnavailableReason }}
+          </p>
+
+          <div class="game-actions-grid" *ngIf="showDealerDrawButton || showRoundResultButton">
+            <button type="button" class="action-button" *ngIf="showDealerDrawButton" (click)="startDealerDraw()">Dealer compra carta</button>
+            <button type="button" class="action-button" *ngIf="showRoundResultButton" (click)="showRoundResult()">Mostrar resultado</button>
+          </div>
+
+          <div class="game-actions-grid" *ngIf="visiblePlayerActions.length > 0">
+            <button
+              type="button"
+              class="action-button"
+              *ngFor="let action of visiblePlayerActions"
+              (click)="onPlayerAction(action)"
+            >
+              {{ getActionLabel(action) }}{{ isRecommendedExecutableAction(action) ? ' · recomendado' : '' }}
+            </button>
+          </div>
+
+          <div class="player-action-hints" *ngIf="unavailablePlayerActionHints.length > 0">
+            <small class="player-action-hint" *ngFor="let hint of unavailablePlayerActionHints">
+              {{ hint }}
+            </small>
           </div>
         </div>
 
@@ -391,3 +563,11 @@
     </section>
   </ng-template>
 </main>
+
+<app-card-selection-modal
+  [isOpen]="cardModalOpen"
+  [title]="cardModalTitle"
+  [shoeCounts]="tableState.shoeCounts"
+  (cardSelected)="handleModalCardSelected($event)"
+  (closed)="closeCardSelectionModal()"
+/>

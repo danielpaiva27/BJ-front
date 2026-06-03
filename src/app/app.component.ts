@@ -5,17 +5,33 @@ import { FormsModule } from '@angular/forms';
 import { finalize } from 'rxjs/operators';
 
 import { ActionAnalysis, AnalyzeHandResponse, GameRulesRequest, RiskProfile } from './models/blackjack-analysis.models';
-import { BlackjackTableState, CardTarget, CardValue } from './models/blackjack-table.models';
+import {
+  BlackjackTableState,
+  CardTarget,
+  CardValue,
+  GuidedRoundAction,
+  GuidedRoundPhase,
+  PreRoundAnalysisSnapshot,
+} from './models/blackjack-table.models';
 import { BlackjackAnalysisService } from './services/blackjack-analysis.service';
+import { CardSelectionModalComponent } from './components/card-selection-modal/card-selection-modal.component';
 import { InfoTooltipComponent } from './components/info-tooltip/info-tooltip.component';
 import {
+  buildPreRoundAnalysis,
   buildAnalyzeHandRequest,
   createInitialTableState,
+  evaluatePlayerHand,
+  getAvailablePlayerActions,
+  getAllowedCardTargetsForRoundPhase,
   getTotalRemainingCards,
+  isGuidedRoundActionAllowed,
+  PlayerActionAvailability,
   registerCardAction,
   resetRound,
   resetShoe,
+  shouldDealerHit,
   startNewRoundKeepingShoe,
+  transitionGuidedRoundPhase,
   undoLastRegisteredCard,
 } from './utils/blackjack-table.utils';
 
@@ -36,11 +52,38 @@ interface TableSetupConfig {
 }
 
 type VisualRoundPhase = 'shoe_active' | 'dealer_reveal' | 'round_finished';
+type NaturalBlackjackResult = 'player_win' | 'push';
+type RoundOutcome = 'player_win' | 'dealer_win' | 'push';
+type RoundResultReason =
+  | 'player_bust'
+  | 'dealer_bust'
+  | 'player_higher_total'
+  | 'dealer_higher_total'
+  | 'push_equal_total'
+  | 'player_natural_blackjack'
+  | 'push_natural_blackjack'
+  | 'player_surrender';
+
+interface RoundResolution {
+  outcome: RoundOutcome;
+  reason: RoundResultReason;
+  playerTotal: number;
+  dealerTotal: number | null;
+  playerCards: CardValue[];
+  dealerCards: CardValue[];
+  hasDoubled: boolean;
+  hasSurrendered: boolean;
+  hasNaturalBlackjack: boolean;
+  isPlayerBust: boolean;
+  isDealerBust: boolean;
+  isPush: boolean;
+  message: string;
+}
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule, InfoTooltipComponent],
+  imports: [CommonModule, FormsModule, InfoTooltipComponent, CardSelectionModalComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
 })
@@ -64,6 +107,22 @@ export class AppComponent {
     table_setup: 'Configuração da mesa',
     shoe_active: 'Shoe ativo',
     analysis_ready: 'Pronto para análise',
+  };
+
+  readonly roundPhaseLabels: Record<GuidedRoundPhase, string> = {
+    SETUP: 'Setup',
+    SHOE_ACTIVE: 'Shoe ativo',
+    SEEN_CARDS_SETUP: 'Registro de cartas vistas',
+    BETTING_DECISION: 'Aguardando inicio da mao',
+    INITIAL_DEAL: 'Distribuicao inicial',
+    PLAYER_DECISION: 'Decisao do jogador',
+    PLAYER_HIT_PENDING: 'Aguardando carta do jogador',
+    PLAYER_DOUBLE_PENDING: 'Aguardando carta unica do Dobrar',
+    DEALER_REVEAL_PENDING: 'Aguardando carta oculta do dealer',
+    DEALER_TURN: 'Turno do dealer',
+    DEALER_DRAW_PENDING: 'Aguardando compra do dealer',
+    ROUND_RESULT: 'Resultado da rodada',
+    ROUND_ENDED: 'Rodada encerrada',
   };
 
   readonly riskProfileLabels: Record<RiskProfile, string> = {
@@ -95,21 +154,35 @@ export class AppComponent {
   analysisError = '';
   analysisLoading = false;
   analysisResponse: AnalyzeHandResponse | null = null;
+  latestBettingData: AnalyzeHandResponse['betting'] | null = null;
   actionGuidance = '';
   cardRegistrationFeedback = '';
   visualRoundPhase: VisualRoundPhase = 'shoe_active';
   doubleCardPending = false;
+  hasDoubled = false;
   playerCardsLocked = false;
+  hasSurrendered = false;
+  splitCount = 0;
   shoeNumber = 0;
   recentRegisteredCardValue: CardValue | null = null;
+  cardModalOpen = false;
+  cardModalTitle = '';
+  naturalBlackjackResult: NaturalBlackjackResult | null = null;
+  roundResolution: RoundResolution | null = null;
+  preRoundAnalysis: PreRoundAnalysisSnapshot | null = null;
+  currentRoundPreBetAnalysis: PreRoundAnalysisSnapshot | null = null;
+  private preRoundAnalysisSignature = '';
 
   readonly cardTargets: CardTarget[] = ['player', 'dealer_upcard', 'seen', 'dealer_revealed'];
-  readonly priorityActionOrder: ActionAnalysis['action'][] = ['hit', 'stand', 'double', 'split'];
 
   constructor(private readonly blackjackAnalysisService: BlackjackAnalysisService) {}
 
+  get currentRoundPhase(): GuidedRoundPhase {
+    return this.tableState.roundPhase;
+  }
+
   get isSetupPhase(): boolean {
-    return this.tableState.gamePhase === 'table_setup';
+    return this.currentRoundPhase === 'SETUP';
   }
 
   get remainingCards(): number {
@@ -128,18 +201,399 @@ export class AppComponent {
     return this.analysisResponse?.betting ?? null;
   }
 
+  get nextRoundBettingData() {
+    return this.preRoundAnalysis?.betting ?? this.bettingData ?? this.latestBettingData;
+  }
+
   get canAnalyzeCurrentDecision(): boolean {
-    return this.tableState.playerCards.length >= 2 && this.tableState.dealerUpcard !== null;
+    return (
+      this.canUseRoundAction('ANALYZE_DECISION') &&
+      this.tableState.playerCards.length >= 2 &&
+      this.tableState.dealerUpcard !== null
+    );
   }
 
   get visualPhaseLabel(): string {
-    if (this.visualRoundPhase === 'dealer_reveal') {
-      return 'Revelação das cartas do dealer';
+    return this.roundPhaseLabels[this.currentRoundPhase];
+  }
+
+  get playerHandEvaluation() {
+    return evaluatePlayerHand(this.tableState.playerCards);
+  }
+
+  get playerBustDetected(): boolean {
+    return this.playerHandEvaluation.isBust;
+  }
+
+  get showPlayerBustResultCard(): boolean {
+    return this.currentRoundPhase === 'ROUND_RESULT' && this.playerBustDetected;
+  }
+
+  get playerBustResultDescription(): string {
+    if (!this.playerBustDetected) {
+      return '';
     }
-    if (this.visualRoundPhase === 'round_finished') {
-      return 'Rodada finalizada';
+
+    const handType = this.playerHandEvaluation.isSoft ? 'soft' : 'hard';
+    const doubledSuffix = this.roundResolution?.hasDoubled ? ' Mao dobrada nesta rodada.' : '';
+    return `Jogador estourou com ${this.playerHandEvaluation.total} pontos (${handType}).${doubledSuffix}`;
+  }
+
+  get dealerHandEvaluation(): ReturnType<typeof evaluatePlayerHand> | null {
+    if (!this.tableState.dealerUpcard || this.tableState.dealerRevealedCards.length === 0) {
+      return null;
     }
-    return 'Jogador em decisão';
+
+    return evaluatePlayerHand(this.dealerCards);
+  }
+
+  get dealerShouldDraw(): boolean {
+    if (!this.dealerHandEvaluation) {
+      return false;
+    }
+
+    return shouldDealerHit(this.dealerHandEvaluation, Boolean(this.activeRules.dealer_hits_soft_17));
+  }
+
+  get showDealerHandSummary(): boolean {
+    return this.dealerHandEvaluation !== null;
+  }
+
+  get dealerVisibleCards(): CardValue[] {
+    return this.dealerCards;
+  }
+
+  get showRoundResolutionCard(): boolean {
+    return this.currentRoundPhase === 'ROUND_RESULT' && this.roundResolution !== null;
+  }
+
+  get showDoubledHandStatus(): boolean {
+    return this.hasDoubled || Boolean(this.roundResolution?.hasDoubled);
+  }
+
+  get showSurrenderStatus(): boolean {
+    return Boolean(this.roundResolution?.hasSurrendered);
+  }
+
+  get showNaturalBlackjackStatus(): boolean {
+    return Boolean(this.roundResolution?.hasNaturalBlackjack);
+  }
+
+  get roundResolutionTitle(): string {
+    if (!this.roundResolution) {
+      return '';
+    }
+
+    if (this.roundResolution.reason === 'dealer_bust') {
+      return 'Vitoria do jogador - dealer estourou.';
+    }
+
+    if (this.roundResolution.reason === 'player_bust') {
+      return 'Derrota do jogador - jogador estourou.';
+    }
+
+    if (this.roundResolution.reason === 'player_higher_total') {
+      return `Vitoria do jogador - ${this.roundResolution.playerTotal} contra ${this.roundResolution.dealerTotal}.`;
+    }
+
+    if (this.roundResolution.reason === 'dealer_higher_total') {
+      return `Derrota do jogador - ${this.roundResolution.playerTotal} contra ${this.roundResolution.dealerTotal}.`;
+    }
+
+    if (this.roundResolution.reason === 'push_equal_total') {
+      return `Empate - ambos terminaram com ${this.roundResolution.playerTotal}.`;
+    }
+
+    if (this.roundResolution.reason === 'player_surrender') {
+      return 'Surrender - rodada encerrada com perda de 0.5 unidade teorica.';
+    }
+
+    if (this.roundResolution.reason === 'player_natural_blackjack') {
+      return 'Blackjack natural - vitoria do jogador.';
+    }
+
+    if (this.roundResolution.reason === 'push_natural_blackjack') {
+      return 'Push - jogador e dealer tiveram blackjack natural.';
+    }
+
+    return 'Resultado da rodada encerrada.';
+  }
+
+  get roundResolutionDescription(): string {
+    if (!this.roundResolution) {
+      return '';
+    }
+
+    const dealerTotalLabel = this.roundResolution.dealerTotal === null ? '-' : String(this.roundResolution.dealerTotal);
+    return `Jogador: ${this.roundResolution.playerCards.join(', ') || '-'} (${this.roundResolution.playerTotal}) · Dealer: ${this.roundResolution.dealerCards.join(', ') || '-'} (${dealerTotalLabel}).`;
+  }
+
+  get roundResolutionReasonDescription(): string {
+    if (!this.roundResolution) {
+      return '';
+    }
+
+    const notes: string[] = [this.roundResolution.message];
+
+    if (this.roundResolution.hasDoubled) {
+      notes.push('Double realizado nesta mao.');
+    }
+
+    if (this.roundResolution.hasNaturalBlackjack) {
+      notes.push('Blackjack natural registrado no desfecho.');
+    }
+
+    if (this.currentRoundPreBetAnalysis) {
+      notes.push(
+        `Exposicao teorica definida antes da mao: ${this.currentRoundPreBetAnalysis.betting.bet_units.toFixed(2)} unidades (equivalente simulado: ${this.currentRoundPreBetAnalysis.betting.suggested_bet.toFixed(2)}).`,
+      );
+    }
+
+    return notes.join(' ');
+  }
+
+  get playerNaturalBlackjackDetected(): boolean {
+    return this.isNaturalBlackjack(this.tableState.playerCards);
+  }
+
+  get dealerNaturalBlackjackDetected(): boolean {
+    return this.isNaturalBlackjack(this.dealerInitialCards);
+  }
+
+  get naturalBlackjackResultTitle(): string {
+    if (!this.naturalBlackjackResult) {
+      return '';
+    }
+
+    return this.naturalBlackjackResult === 'push'
+      ? 'Resultado: empate/push'
+      : 'Resultado: vitoria do jogador';
+  }
+
+  get naturalBlackjackResultDescription(): string {
+    if (!this.naturalBlackjackResult) {
+      return '';
+    }
+
+    if (this.naturalBlackjackResult === 'push') {
+      return 'Dealer tambem tem blackjack natural. A rodada termina em empate/push.';
+    }
+
+    return 'Dealer nao tem blackjack natural. A rodada termina com vitoria do jogador.';
+  }
+
+  get showInitialDealProgress(): boolean {
+    return (
+      this.currentRoundPhase === 'INITIAL_DEAL' ||
+      (
+        this.tableState.playerCards.length === 2 &&
+        this.tableState.dealerUpcard !== null &&
+        this.tableState.dealerRevealedCards.length === 0 &&
+        (this.currentRoundPhase === 'PLAYER_DECISION' || this.currentRoundPhase === 'DEALER_REVEAL_PENDING')
+      )
+    );
+  }
+
+  get initialDealProgressLabel(): string {
+    if (this.tableState.playerCards.length === 0) {
+      return '1/3: primeira carta do jogador';
+    }
+
+    if (this.tableState.playerCards.length === 1) {
+      return '2/3: segunda carta do jogador';
+    }
+
+    return '3/3: carta aberta do dealer';
+  }
+
+  get availableCardTargets(): CardTarget[] {
+    if (this.currentRoundPhase === 'INITIAL_DEAL') {
+      if (this.tableState.playerCards.length < 2) {
+        return ['player'];
+      }
+
+      if (!this.tableState.dealerUpcard) {
+        return ['dealer_upcard'];
+      }
+
+      return [];
+    }
+
+    const allowedTargets = getAllowedCardTargetsForRoundPhase(this.currentRoundPhase);
+    return this.cardTargets.filter((target) => allowedTargets.includes(target));
+  }
+
+  get canRegisterCardsInCurrentPhase(): boolean {
+    return this.availableCardTargets.includes(this.tableState.selectedTarget);
+  }
+
+  get showEnterSeenCardsSetup(): boolean {
+    return (
+      (this.currentRoundPhase === 'SHOE_ACTIVE' || this.currentRoundPhase === 'BETTING_DECISION') &&
+      this.canUseRoundAction('START_SEEN_CARDS_SETUP')
+    );
+  }
+
+  get showConfirmSeenCards(): boolean {
+    return this.currentRoundPhase === 'SEEN_CARDS_SETUP' && this.canUseRoundAction('CONFIRM_SEEN_CARDS');
+  }
+
+  get showSeenCardsDefinitionCard(): boolean {
+    return (
+      this.currentRoundPhase === 'SHOE_ACTIVE' ||
+      this.currentRoundPhase === 'SEEN_CARDS_SETUP' ||
+      this.currentRoundPhase === 'BETTING_DECISION'
+    );
+  }
+
+  get registerPanelTitle(): string {
+    if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
+      return 'Definir cartas ja vistas';
+    }
+
+    return 'Registro de cartas';
+  }
+
+  get registerPanelDescription(): string {
+    if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
+      return 'As cartas clicadas aqui entram em cartas vistas, reduzem o shoe e serao enviadas no payload da analise.';
+    }
+
+    if (this.currentRoundPhase === 'INITIAL_DEAL') {
+      return this.initialDealPrompt;
+    }
+
+    return 'Registro disponivel conforme a fase atual do fluxo guiado.';
+  }
+
+  get showStartHandCard(): boolean {
+    return this.currentRoundPhase === 'SHOE_ACTIVE' || this.currentRoundPhase === 'BETTING_DECISION';
+  }
+
+  get canAnalyzePreRound(): boolean {
+    return this.showStartHandCard;
+  }
+
+  get preRoundAnalysisNeedsRefresh(): boolean {
+    return Boolean(this.preRoundAnalysis && this.preRoundAnalysisSignature !== this.buildPreRoundAnalysisSignature());
+  }
+
+  get showConfirmBettingDecision(): boolean {
+    return this.showStartHandCard && this.canUseRoundAction('CONFIRM_BET');
+  }
+
+  get initialDealPrompt(): string {
+    if (this.currentRoundPhase !== 'INITIAL_DEAL') {
+      return '';
+    }
+
+    if (this.tableState.playerCards.length === 0) {
+      return '1/3: primeira carta do jogador';
+    }
+
+    if (this.tableState.playerCards.length === 1) {
+      return '2/3: segunda carta do jogador';
+    }
+
+    if (!this.tableState.dealerUpcard) {
+      return '3/3: carta aberta do dealer';
+    }
+
+    return 'Distribuicao inicial concluida.';
+  }
+
+  get currentCardRequestTitle(): string {
+    if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
+      return 'Carta ja vista do shoe atual';
+    }
+
+    if (this.currentRoundPhase === 'INITIAL_DEAL') {
+      return this.initialDealProgressLabel;
+    }
+
+    if (this.currentRoundPhase === 'PLAYER_HIT_PENDING') {
+      return 'Selecione a carta comprada pelo jogador';
+    }
+
+    if (this.currentRoundPhase === 'PLAYER_DOUBLE_PENDING') {
+      return 'Selecione a única carta comprada pelo jogador no Double';
+    }
+
+    if (this.currentRoundPhase === 'DEALER_REVEAL_PENDING') {
+      return 'Selecione a carta oculta/revelada do dealer';
+    }
+
+    if (this.currentRoundPhase === 'DEALER_DRAW_PENDING') {
+      return 'Selecione a carta comprada pelo dealer';
+    }
+
+    return `Selecionar carta para ${this.getCardTargetLabel(this.tableState.selectedTarget)}`;
+  }
+
+  get currentCardRequestButtonLabel(): string {
+    if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
+      return 'Adicionar carta vista';
+    }
+
+    if (this.currentRoundPhase === 'INITIAL_DEAL') {
+      if (this.tableState.playerCards.length === 0) {
+        return 'Selecionar primeira carta';
+      }
+
+      if (this.tableState.playerCards.length === 1) {
+        return 'Selecionar segunda carta';
+      }
+
+      return 'Selecionar carta aberta';
+    }
+
+    return 'Selecionar carta';
+  }
+
+  get showDealerDrawButton(): boolean {
+    return this.currentRoundPhase === 'DEALER_TURN' && this.canUseRoundAction('START_DEALER_DRAW') && this.dealerShouldDraw;
+  }
+
+  get showRoundResultButton(): boolean {
+    return (
+      this.currentRoundPhase === 'DEALER_TURN' &&
+      this.canUseRoundAction('SHOW_ROUND_RESULT') &&
+      this.dealerHandEvaluation !== null &&
+      !this.dealerShouldDraw
+    );
+  }
+
+  get playerActionAvailability(): PlayerActionAvailability[] {
+    return getAvailablePlayerActions({
+      phase: this.currentRoundPhase,
+      playerCards: this.tableState.playerCards,
+      rules: this.activeRules,
+      flags: {
+        hasHit: this.hasHit,
+        hasDoubled: this.hasDoubled,
+        hasSplit: this.hasSplit,
+        hasSurrendered: this.hasSurrendered,
+        isRoundEnded: this.isRoundEnded,
+        splitCount: this.splitCount,
+      },
+      handEvaluation: this.playerHandEvaluation,
+    });
+  }
+
+  get visiblePlayerActions(): ActionAnalysis['action'][] {
+    return this.playerActionAvailability.filter((item) => item.isAvailable).map((item) => item.action);
+  }
+
+  get unavailablePlayerActionHints(): string[] {
+    if (this.currentRoundPhase !== 'PLAYER_DECISION') {
+      return [];
+    }
+
+    const reasons = this.playerActionAvailability
+      .filter((item) => !item.isAvailable && item.reason)
+      .map((item) => item.reason as string);
+
+    return Array.from(new Set(reasons));
   }
 
   get decisionRanking(): ActionAnalysis[] {
@@ -157,8 +611,105 @@ export class AppComponent {
     return this.getActionByName(this.recommendedAction);
   }
 
-  get hasSurrenderAction(): boolean {
-    return this.getActionByName('surrender') !== null;
+  get recommendedActionUnavailableReason(): string {
+    if (!this.recommendedAction) {
+      return '';
+    }
+
+    const availability = this.getPlayerActionAvailability(this.recommendedAction);
+    if (!availability || availability.isAvailable) {
+      return '';
+    }
+
+    return availability.reason ?? '';
+  }
+
+  canUseRoundAction(action: GuidedRoundAction): boolean {
+    return isGuidedRoundActionAllowed(this.currentRoundPhase, action);
+  }
+
+  enterSeenCardsSetup(): void {
+    if (!this.canUseRoundAction('START_SEEN_CARDS_SETUP')) {
+      this.actionGuidance = 'Acao indisponivel na fase atual da rodada.';
+      return;
+    }
+
+    this.advanceRoundPhase('START_SEEN_CARDS_SETUP');
+    this.selectTarget('seen');
+    this.actionGuidance = 'Use esta etapa para informar cartas que ja sairam neste shoe antes da rodada atual.';
+    this.openCardSelectionModal('Carta ja vista do shoe atual');
+  }
+
+  confirmSeenCardsSetup(): void {
+    if (!this.advanceRoundPhase('CONFIRM_SEEN_CARDS')) {
+      return;
+    }
+
+    this.actionGuidance = 'Cartas vistas confirmadas. Confirme a mao para iniciar a distribuicao das cartas.';
+  }
+
+  confirmBettingDecision(): void {
+    const hasPreRoundAnalysis = Boolean(this.preRoundAnalysis);
+    const isPreRoundAnalysisStale = this.preRoundAnalysisNeedsRefresh;
+
+    if (isPreRoundAnalysisStale) {
+      const continueWithStaleAnalysis = window.confirm(
+        'A análise pré-rodada está desatualizada. Deseja iniciar a mão mesmo assim?',
+      );
+
+      if (!continueWithStaleAnalysis) {
+        this.actionGuidance = 'Inicio da mao cancelado. Atualize a analise pre-rodada antes de iniciar.';
+        return;
+      }
+    }
+
+    this.currentRoundPreBetAnalysis = this.preRoundAnalysis
+      ? this.clonePreRoundAnalysis(this.preRoundAnalysis)
+      : null;
+
+    if (!this.advanceRoundPhase('CONFIRM_BET')) {
+      return;
+    }
+
+    this.selectTarget('player');
+    const preRoundWarning = isPreRoundAnalysisStale
+      ? 'A analise pre-rodada estava desatualizada e foi mantida sem recalculo automatico. '
+      : hasPreRoundAnalysis
+        ? ''
+        : 'Voce ainda nao executou a analise pre-rodada. ';
+    this.actionGuidance = `${preRoundWarning}${this.initialDealPrompt}`;
+    this.openCardSelectionModal(this.currentCardRequestTitle);
+  }
+
+  analyzePreRound(): void {
+    const preRoundAnalysis = this.executePreRoundAnalysis(false);
+
+    if (!preRoundAnalysis) {
+      this.actionGuidance = 'Analise pre-rodada disponivel somente antes do inicio da mao.';
+      return;
+    }
+
+    this.actionGuidance =
+      'Analise pre-rodada atualizada. Revise status do shoe e exposicao teorica antes de aceitar a aposta simulacional.';
+  }
+
+  startDealerDraw(): void {
+    if (!this.advanceRoundPhase('START_DEALER_DRAW')) {
+      return;
+    }
+
+    this.selectTarget('dealer_revealed');
+    this.actionGuidance = 'Dealer com total abaixo do limite deve comprar carta.';
+    this.openCardSelectionModal('Selecione a carta comprada pelo dealer');
+  }
+
+  showRoundResult(): void {
+    if (this.currentRoundPhase !== 'DEALER_TURN') {
+      this.actionGuidance = 'Resultado indisponivel fora do turno do dealer.';
+      return;
+    }
+
+    this.finalizeRoundAgainstDealerTotals();
   }
 
   startShoe(): void {
@@ -177,37 +728,96 @@ export class AppComponent {
     this.tableState = {
       ...initializedState,
       gamePhase: 'shoe_active',
+      roundPhase: transitionGuidedRoundPhase(initializedState.roundPhase, 'START_SHOE'),
     };
     this.cardRegistrationError = '';
     this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
-    this.actionGuidance = 'Shoe iniciado. Escolha onde registrar a próxima carta observada.';
+    this.latestBettingData = null;
+    this.actionGuidance = 'Shoe iniciado. Defina cartas ja vistas se necessario, ou va direto para o inicio da rodada.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
+    this.hasDoubled = false;
     this.playerCardsLocked = false;
+    this.hasSurrendered = false;
+    this.splitCount = 0;
     this.shoeNumber = 1;
     this.recentRegisteredCardValue = null;
+    this.naturalBlackjackResult = null;
+    this.roundResolution = null;
+    this.preRoundAnalysis = null;
+    this.currentRoundPreBetAnalysis = null;
+    this.preRoundAnalysisSignature = '';
+    this.closeCardSelectionModal();
   }
 
   selectTarget(target: CardTarget): void {
+    if (!this.availableCardTargets.includes(target)) {
+      this.cardRegistrationError = 'Destino indisponivel na fase atual da rodada.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
     this.tableState = {
       ...this.tableState,
       selectedTarget: target,
     };
   }
 
-  registerCard(value: CardValue): void {
-    if (this.visualRoundPhase === 'round_finished') {
-      this.cardRegistrationError = 'Rodada finalizada. Inicie uma nova rodada para registrar novas cartas.';
+  openCardSelectionModal(title = this.currentCardRequestTitle): void {
+    if (this.availableCardTargets.length === 0) {
+      this.cardRegistrationError = 'Nenhuma carta pode ser registrada na fase atual da rodada.';
       this.cardRegistrationFeedback = '';
       return;
+    }
+
+    if (!this.availableCardTargets.includes(this.tableState.selectedTarget)) {
+      const [nextTarget] = this.availableCardTargets;
+      this.tableState = {
+        ...this.tableState,
+        selectedTarget: nextTarget,
+      };
+    }
+
+    if (!this.canRegisterCardsInCurrentPhase) {
+      this.cardRegistrationError = 'Destino indisponivel na fase atual da rodada.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
+    this.cardRegistrationError = '';
+    this.cardModalTitle = title;
+    this.cardModalOpen = true;
+  }
+
+  closeCardSelectionModal(): void {
+    this.cardModalOpen = false;
+  }
+
+  handleModalCardSelected(value: CardValue): void {
+    const previousTitle = this.cardModalTitle;
+    this.closeCardSelectionModal();
+
+    if (!this.registerCard(value)) {
+      this.cardModalTitle = previousTitle;
+      this.cardModalOpen = true;
+    }
+  }
+
+  registerCard(value: CardValue): boolean {
+    const registrationAction = this.getRegistrationActionForCurrentTarget();
+
+    if (!registrationAction) {
+      this.cardRegistrationError = 'Registro de carta indisponivel na fase atual da rodada.';
+      this.cardRegistrationFeedback = '';
+      return false;
     }
 
     if (this.tableState.selectedTarget === 'player' && this.playerCardsLocked) {
       this.cardRegistrationError = 'Mão do jogador bloqueada após Dobrar. Continue registrando as cartas do dealer.';
       this.cardRegistrationFeedback = '';
-      return;
+      return false;
     }
 
     const result = registerCardAction(this.tableState, value, this.tableState.selectedTarget);
@@ -218,16 +828,22 @@ export class AppComponent {
       : '';
     this.recentRegisteredCardValue = result.ok ? value : null;
     this.analysisError = '';
+    this.analysisResponse = result.ok ? null : this.analysisResponse;
 
-    if (result.ok && this.tableState.selectedTarget === 'player' && this.doubleCardPending) {
-      this.doubleCardPending = false;
-      this.playerCardsLocked = true;
-      this.actionGuidance =
-        'Carta única da ação Dobrar registrada. A mão do jogador foi bloqueada para novas compras nesta rodada.';
+    if (result.ok) {
+      this.applyPostRegistrationTransition(registrationAction);
     }
+
+    return result.ok;
   }
 
   undoLastCard(): void {
+    if (!this.canUseRoundAction('UNDO_CARD')) {
+      this.cardRegistrationError = 'Desfazer carta indisponivel na fase atual da rodada.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
     const result = undoLastRegisteredCard(this.tableState);
     this.tableState = result.state;
     this.cardRegistrationError = result.ok ? '' : result.error ?? 'Falha ao desfazer carta.';
@@ -240,6 +856,7 @@ export class AppComponent {
     this.tableState = {
       ...resetRound(this.tableState),
       gamePhase: 'shoe_active',
+      roundPhase: 'SHOE_ACTIVE',
     };
     this.cardRegistrationError = '';
     this.cardRegistrationFeedback = '';
@@ -248,8 +865,17 @@ export class AppComponent {
     this.actionGuidance = 'Rodada reiniciada. Registre novamente as cartas da rodada atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
+    this.hasDoubled = false;
     this.playerCardsLocked = false;
+    this.hasSurrendered = false;
+    this.splitCount = 0;
     this.recentRegisteredCardValue = null;
+    this.naturalBlackjackResult = null;
+    this.roundResolution = null;
+    this.preRoundAnalysis = null;
+    this.currentRoundPreBetAnalysis = null;
+    this.preRoundAnalysisSignature = '';
+    this.closeCardSelectionModal();
   }
 
   resetCurrentShoe(): void {
@@ -264,21 +890,35 @@ export class AppComponent {
     this.tableState = {
       ...resetShoe(this.tableState),
       gamePhase: 'shoe_active',
+      roundPhase: 'SHOE_ACTIVE',
     };
     this.cardRegistrationError = '';
     this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
+    this.latestBettingData = null;
     this.actionGuidance = 'Shoe reiniciado com as contagens iniciais.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
+    this.hasDoubled = false;
     this.playerCardsLocked = false;
+    this.hasSurrendered = false;
+    this.splitCount = 0;
     this.shoeNumber += 1;
     this.recentRegisteredCardValue = null;
+    this.naturalBlackjackResult = null;
+    this.roundResolution = null;
+    this.preRoundAnalysis = null;
+    this.currentRoundPreBetAnalysis = null;
+    this.preRoundAnalysisSignature = '';
+    this.closeCardSelectionModal();
   }
 
   startNextRound(): void {
-    this.tableState = startNewRoundKeepingShoe(this.tableState);
+    this.tableState = {
+      ...startNewRoundKeepingShoe(this.tableState),
+      roundPhase: 'SHOE_ACTIVE',
+    };
     this.cardRegistrationError = '';
     this.cardRegistrationFeedback = '';
     this.analysisError = '';
@@ -286,69 +926,112 @@ export class AppComponent {
     this.actionGuidance = 'Nova rodada iniciada mantendo o shoe atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
+    this.hasDoubled = false;
     this.playerCardsLocked = false;
+    this.hasSurrendered = false;
+    this.splitCount = 0;
     this.recentRegisteredCardValue = null;
+    this.naturalBlackjackResult = null;
+    this.roundResolution = null;
+    this.preRoundAnalysis = null;
+    this.currentRoundPreBetAnalysis = null;
+    this.preRoundAnalysisSignature = '';
+    this.closeCardSelectionModal();
   }
 
   onHit(): void {
-    if (this.visualRoundPhase === 'round_finished') {
-      this.actionGuidance = 'Rodada finalizada. Use Nova rodada para continuar.';
+    if (!this.canExecutePlayerAction('hit')) {
+      this.showUnavailableActionGuidance('hit');
       return;
     }
 
-    if (this.playerCardsLocked) {
-      this.actionGuidance = 'Mão do jogador bloqueada por Dobrar. Registre as cartas do dealer.';
-      return;
-    }
-
+    this.advanceRoundPhase('HIT');
     this.selectTarget('player');
-    this.visualRoundPhase = 'shoe_active';
-    this.actionGuidance = 'Pedir carta selecionado. Clique na carta comprada para registrar na mão do jogador.';
+    this.actionGuidance = 'Pedir carta selecionado. Registre a carta comprada na mao do jogador.';
+    this.openCardSelectionModal('Selecione a carta comprada pelo jogador');
   }
 
   onStand(): void {
-    if (this.visualRoundPhase === 'round_finished') {
-      this.actionGuidance = 'Rodada finalizada. Use Nova rodada para continuar.';
+    if (!this.canExecutePlayerAction('stand')) {
+      this.showUnavailableActionGuidance('stand');
       return;
     }
 
+    this.advanceRoundPhase('STAND');
     this.selectTarget('dealer_revealed');
-    this.visualRoundPhase = 'dealer_reveal';
-    this.actionGuidance = 'Parar selecionado. Registre as cartas reveladas do dealer.';
+    this.actionGuidance = 'A vez do jogador terminou. Agora revele a carta oculta do dealer.';
+    this.openCardSelectionModal('Selecione a carta oculta/revelada do dealer');
   }
 
   onDouble(): void {
-    if (this.visualRoundPhase === 'round_finished') {
-      this.actionGuidance = 'Rodada finalizada. Use Nova rodada para continuar.';
+    if (!this.canExecutePlayerAction('double')) {
+      this.showUnavailableActionGuidance('double');
       return;
     }
 
-    if (this.playerCardsLocked) {
-      this.actionGuidance = 'Dobrar já foi aplicado nesta rodada; a mão do jogador está bloqueada para nova compra.';
-      return;
-    }
-
+    this.advanceRoundPhase('DOUBLE');
     this.selectTarget('player');
     this.doubleCardPending = true;
-    this.visualRoundPhase = 'shoe_active';
     this.actionGuidance =
-      'Dobrar selecionado. Registre agora a única carta adicional do jogador; depois disso a mão será bloqueada.';
+      'Dobrar selecionado. Registre agora a unica carta adicional do jogador; depois disso a mao sera bloqueada.';
+    this.openCardSelectionModal('Selecione a única carta comprada pelo jogador no Double');
   }
 
   onSplit(): void {
+    if (!this.canExecutePlayerAction('split')) {
+      this.showUnavailableActionGuidance('split');
+      return;
+    }
+
     this.actionGuidance =
-      'Dividir selecionado. O suporte visual completo a múltiplas mãos será disponibilizado em uma próxima etapa.';
+      'O suporte visual completo para Split sera implementado em uma etapa futura. Split cria duas maos independentes a partir de um par, por isso exige um fluxo visual proprio para multiplas maos.';
   }
 
   onSurrender(): void {
+    if (!this.canExecutePlayerAction('surrender')) {
+      this.showUnavailableActionGuidance('surrender');
+      return;
+    }
+
+    const confirmed = window.confirm('Deseja realmente render-se nesta mão?');
+    if (!confirmed) {
+      this.actionGuidance = 'Render-se cancelado. A rodada continua na decisao do jogador.';
+      return;
+    }
+
+    if (!this.advanceRoundPhase('SURRENDER')) {
+      return;
+    }
+
+    this.hasSurrendered = true;
+    this.roundResolution = {
+      outcome: 'dealer_win',
+      reason: 'player_surrender',
+      playerTotal: this.playerHandEvaluation.total,
+      dealerTotal: null,
+      playerCards: [...this.tableState.playerCards],
+      dealerCards: [...this.dealerCards],
+      hasDoubled: this.hasDoubled,
+      hasSurrendered: true,
+      hasNaturalBlackjack: false,
+      isPlayerBust: false,
+      isDealerBust: false,
+      isPush: false,
+      message: 'Jogador se rendeu. Rodada encerrada com perda de 0.5 unidade teorica.',
+    };
     this.visualRoundPhase = 'round_finished';
     this.doubleCardPending = false;
-    this.playerCardsLocked = false;
-    this.actionGuidance =
-      'Render-se registrado no fluxo visual. A rodada foi finalizada mantendo o histórico de cartas no shoe.';
+    this.hasDoubled = false;
+    this.playerCardsLocked = true;
+    this.actionGuidance = 'Jogador se rendeu. Rodada encerrada.';
   }
 
   analyzeCurrentDecision(): void {
+    if (!this.canUseRoundAction('ANALYZE_DECISION')) {
+      this.analysisError = 'Analise indisponivel na fase atual da rodada.';
+      return;
+    }
+
     if (this.tableState.playerCards.length < 2) {
       this.analysisError = 'Análise indisponível: registre pelo menos 2 cartas do jogador.';
       return;
@@ -360,16 +1043,7 @@ export class AppComponent {
     }
 
     const payload = buildAnalyzeHandRequest(this.tableState, {
-      rules: {
-        number_of_decks: this.config.number_of_decks,
-        dealer_hits_soft_17: this.config.dealer_hits_soft_17,
-        blackjack_payout: this.config.blackjack_payout,
-        double_allowed: this.config.double_allowed,
-        double_after_split: this.config.double_after_split,
-        surrender_allowed: this.config.surrender_allowed,
-        max_splits: this.config.max_splits,
-        dealer_peek: this.config.dealer_peek,
-      },
+      rules: this.activeRules,
       simulations: this.config.simulations,
       seed: this.config.seed,
       bankroll: this.config.bankroll,
@@ -392,6 +1066,9 @@ export class AppComponent {
       .subscribe({
         next: (response) => {
           this.analysisResponse = response;
+          this.latestBettingData = response.betting ?? this.latestBettingData;
+          this.setRoundPhase(transitionGuidedRoundPhase(this.currentRoundPhase, 'ANALYZE_DECISION'));
+          this.actionGuidance = 'Analise concluida. Escolha uma das acoes disponiveis para o estado atual.';
         },
         error: (error: unknown) => {
           this.analysisResponse = null;
@@ -399,6 +1076,415 @@ export class AppComponent {
           console.error('Erro ao processar analise da API:', error);
         },
       });
+  }
+
+  onPlayerAction(action: ActionAnalysis['action']): void {
+    if (action === 'hit') {
+      this.onHit();
+      return;
+    }
+
+    if (action === 'stand') {
+      this.onStand();
+      return;
+    }
+
+    if (action === 'double') {
+      this.onDouble();
+      return;
+    }
+
+    if (action === 'split') {
+      this.onSplit();
+      return;
+    }
+
+    this.onSurrender();
+  }
+
+  canExecutePlayerAction(action: ActionAnalysis['action']): boolean {
+    return Boolean(this.getPlayerActionAvailability(action)?.isAvailable);
+  }
+
+  isRecommendedExecutableAction(action: ActionAnalysis['action']): boolean {
+    return this.recommendedAction === action && this.canExecutePlayerAction(action);
+  }
+
+  private get activeRules(): GameRulesRequest {
+    return this.savedRules ?? {
+      number_of_decks: this.config.number_of_decks,
+      dealer_hits_soft_17: this.config.dealer_hits_soft_17,
+      blackjack_payout: this.config.blackjack_payout,
+      double_allowed: this.config.double_allowed,
+      double_after_split: this.config.double_after_split,
+      surrender_allowed: this.config.surrender_allowed,
+      max_splits: this.config.max_splits,
+      dealer_peek: this.config.dealer_peek,
+    };
+  }
+
+  private get hasHit(): boolean {
+    return this.tableState.playerCards.length > 2 && !this.hasDoubled;
+  }
+
+  private get hasSplit(): boolean {
+    return this.splitCount > 0;
+  }
+
+  private get isRoundEnded(): boolean {
+    return this.currentRoundPhase === 'ROUND_RESULT' || this.currentRoundPhase === 'ROUND_ENDED';
+  }
+
+  private get dealerInitialCards(): CardValue[] {
+    if (!this.tableState.dealerUpcard || this.tableState.dealerRevealedCards.length === 0) {
+      return [];
+    }
+
+    return [this.tableState.dealerUpcard, this.tableState.dealerRevealedCards[0]];
+  }
+
+  private get dealerCards(): CardValue[] {
+    if (!this.tableState.dealerUpcard) {
+      return [];
+    }
+
+    return [this.tableState.dealerUpcard, ...this.tableState.dealerRevealedCards];
+  }
+
+  private isNaturalBlackjack(cards: CardValue[]): boolean {
+    return cards.length === 2 && cards.includes('A') && cards.includes('10');
+  }
+
+  private resolveNaturalBlackjackRound(): void {
+    this.naturalBlackjackResult = this.dealerNaturalBlackjackDetected ? 'push' : 'player_win';
+    const dealerEvaluation = this.dealerHandEvaluation;
+    const playerEvaluation = this.playerHandEvaluation;
+    this.roundResolution = {
+      outcome: this.naturalBlackjackResult,
+      reason: this.naturalBlackjackResult === 'push' ? 'push_natural_blackjack' : 'player_natural_blackjack',
+      playerTotal: playerEvaluation.total,
+      dealerTotal: dealerEvaluation?.total ?? null,
+      playerCards: [...this.tableState.playerCards],
+      dealerCards: [...this.dealerCards],
+      hasDoubled: this.hasDoubled,
+      hasSurrendered: false,
+      hasNaturalBlackjack: true,
+      isPlayerBust: false,
+      isDealerBust: false,
+      isPush: this.naturalBlackjackResult === 'push',
+      message:
+        this.naturalBlackjackResult === 'push'
+          ? 'Push por blackjack natural em ambas as maos.'
+          : 'Blackjack natural do jogador com vitoria na rodada.',
+    };
+    this.setRoundPhase('ROUND_RESULT');
+    this.visualRoundPhase = 'round_finished';
+    this.playerCardsLocked = true;
+    this.doubleCardPending = false;
+    this.actionGuidance =
+      this.naturalBlackjackResult === 'push'
+        ? 'Blackjack natural detectado. Dealer tambem tem blackjack natural: empate/push.'
+        : 'Blackjack natural detectado. Dealer nao tem blackjack natural: vitoria do jogador.';
+  }
+
+  private getPlayerActionAvailability(action: ActionAnalysis['action']): PlayerActionAvailability | undefined {
+    return this.playerActionAvailability.find((item) => item.action === action);
+  }
+
+  private getPlayerActionUnavailableReason(action: ActionAnalysis['action']): string {
+    return this.getPlayerActionAvailability(action)?.reason ?? 'Acao indisponivel na fase atual da rodada.';
+  }
+
+  private showUnavailableActionGuidance(action: ActionAnalysis['action']): void {
+    this.actionGuidance = this.getPlayerActionUnavailableReason(action);
+  }
+
+  private setRoundPhase(roundPhase: GuidedRoundPhase): void {
+    this.tableState = {
+      ...this.tableState,
+      roundPhase,
+    };
+    this.visualRoundPhase = this.resolveLegacyVisualRoundPhase(roundPhase);
+  }
+
+  private advanceRoundPhase(action: GuidedRoundAction): boolean {
+    if (!this.canUseRoundAction(action)) {
+      this.actionGuidance = 'Acao indisponivel na fase atual da rodada.';
+      return false;
+    }
+
+    this.setRoundPhase(transitionGuidedRoundPhase(this.currentRoundPhase, action));
+    return true;
+  }
+
+  private resolveLegacyVisualRoundPhase(roundPhase: GuidedRoundPhase): VisualRoundPhase {
+    if (roundPhase === 'DEALER_REVEAL_PENDING' || roundPhase === 'DEALER_TURN' || roundPhase === 'DEALER_DRAW_PENDING') {
+      return 'dealer_reveal';
+    }
+
+    if (roundPhase === 'ROUND_RESULT' || roundPhase === 'ROUND_ENDED') {
+      return 'round_finished';
+    }
+
+    return 'shoe_active';
+  }
+
+  private getRegistrationActionForCurrentTarget(): GuidedRoundAction | null {
+    const target = this.tableState.selectedTarget;
+
+    if (!this.availableCardTargets.includes(target)) {
+      return null;
+    }
+
+    if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
+      return target === 'seen' ? 'REGISTER_SEEN_CARD' : null;
+    }
+
+    if (this.currentRoundPhase === 'INITIAL_DEAL') {
+      return 'REGISTER_INITIAL_CARD';
+    }
+
+    if (this.currentRoundPhase === 'PLAYER_HIT_PENDING' && target === 'player') {
+      return 'REGISTER_PLAYER_HIT';
+    }
+
+    if (this.currentRoundPhase === 'PLAYER_DOUBLE_PENDING' && target === 'player') {
+      return 'REGISTER_PLAYER_DOUBLE';
+    }
+
+    if (this.currentRoundPhase === 'DEALER_REVEAL_PENDING' && target === 'dealer_revealed') {
+      return 'REVEAL_DEALER_CARD';
+    }
+
+    if (this.currentRoundPhase === 'DEALER_DRAW_PENDING' && target === 'dealer_revealed') {
+      return 'REGISTER_DEALER_DRAW';
+    }
+
+    return null;
+  }
+
+  private applyPostRegistrationTransition(action: GuidedRoundAction): void {
+    if (action === 'REGISTER_PLAYER_HIT') {
+      const handEvaluation = this.playerHandEvaluation;
+
+      if (handEvaluation.isBust) {
+        this.roundResolution = {
+          outcome: 'dealer_win',
+          reason: 'player_bust',
+          playerTotal: handEvaluation.total,
+          dealerTotal: this.dealerHandEvaluation?.total ?? null,
+          playerCards: [...this.tableState.playerCards],
+          dealerCards: [...this.dealerCards],
+          hasDoubled: this.hasDoubled,
+          hasSurrendered: false,
+          hasNaturalBlackjack: false,
+          isPlayerBust: true,
+          isDealerBust: false,
+          isPush: false,
+          message: 'Jogador estourou acima de 21 pontos.',
+        };
+        this.setRoundPhase('ROUND_RESULT');
+        this.visualRoundPhase = 'round_finished';
+        this.playerCardsLocked = true;
+        this.doubleCardPending = false;
+        this.analysisResponse = null;
+        this.analysisError = '';
+        this.actionGuidance = 'Jogador estourou. Rodada encerrada.';
+        return;
+      }
+
+      this.setRoundPhase(transitionGuidedRoundPhase(this.currentRoundPhase, action));
+      this.actionGuidance = 'Carta do jogador registrada. Atualizando analise para a nova mao do jogador.';
+
+      if (this.tableState.dealerUpcard) {
+        this.analyzeCurrentDecision();
+      }
+
+      return;
+    }
+
+    if (action === 'REVEAL_DEALER_CARD' && this.playerNaturalBlackjackDetected) {
+      this.resolveNaturalBlackjackRound();
+      return;
+    }
+
+    if (action === 'REGISTER_PLAYER_DOUBLE') {
+      const handEvaluation = this.playerHandEvaluation;
+
+      this.doubleCardPending = false;
+      this.hasDoubled = true;
+      this.playerCardsLocked = true;
+
+      if (handEvaluation.isBust) {
+        this.roundResolution = {
+          outcome: 'dealer_win',
+          reason: 'player_bust',
+          playerTotal: handEvaluation.total,
+          dealerTotal: this.dealerHandEvaluation?.total ?? null,
+          playerCards: [...this.tableState.playerCards],
+          dealerCards: [...this.dealerCards],
+          hasDoubled: true,
+          hasSurrendered: false,
+          hasNaturalBlackjack: false,
+          isPlayerBust: true,
+          isDealerBust: false,
+          isPush: false,
+          message: 'Jogador estourou acima de 21 pontos apos o Double.',
+        };
+        this.setRoundPhase('ROUND_RESULT');
+        this.visualRoundPhase = 'round_finished';
+        this.analysisResponse = null;
+        this.analysisError = '';
+        this.actionGuidance = 'Jogador estourou apos Double. Rodada encerrada.';
+        return;
+      }
+
+      this.setRoundPhase(transitionGuidedRoundPhase(this.currentRoundPhase, action));
+      this.tableState = {
+        ...this.tableState,
+        selectedTarget: 'dealer_revealed',
+      };
+      this.actionGuidance =
+        'Carta unica do Dobrar registrada. A mao do jogador foi bloqueada; revele a carta oculta do dealer.';
+      this.openCardSelectionModal('Selecione a carta oculta/revelada do dealer');
+      return;
+    }
+
+    if (action === 'REVEAL_DEALER_CARD' || action === 'REGISTER_DEALER_DRAW') {
+      this.resolveDealerFlowAfterRegisteredCard(action);
+      return;
+    }
+
+    if (
+      action === 'REGISTER_INITIAL_CARD' &&
+      this.currentRoundPhase === 'INITIAL_DEAL'
+    ) {
+      if (this.tableState.playerCards.length < 2) {
+        this.tableState = {
+          ...this.tableState,
+          selectedTarget: 'player',
+        };
+      } else if (!this.tableState.dealerUpcard) {
+        this.tableState = {
+          ...this.tableState,
+          selectedTarget: 'dealer_upcard',
+        };
+      } else if (this.playerNaturalBlackjackDetected) {
+        this.setRoundPhase('DEALER_REVEAL_PENDING');
+        this.tableState = {
+          ...this.tableState,
+          selectedTarget: 'dealer_revealed',
+        };
+        this.actionGuidance =
+          'Blackjack natural do jogador identificado. Revele a carta oculta do dealer para fechar o resultado da rodada.';
+        this.openCardSelectionModal('Selecione a carta oculta/revelada do dealer');
+        return;
+      } else {
+        this.setRoundPhase('PLAYER_DECISION');
+        this.actionGuidance =
+          'Distribuicao inicial concluida. Use Analisar decisao atual para chamar a engine e exibir as acoes possiveis.';
+        return;
+      }
+
+      this.actionGuidance = this.initialDealPrompt;
+    }
+  }
+
+  private resolveDealerFlowAfterRegisteredCard(action: GuidedRoundAction): void {
+    const dealerEvaluation = this.dealerHandEvaluation;
+
+    if (!dealerEvaluation) {
+      this.setRoundPhase(transitionGuidedRoundPhase(this.currentRoundPhase, action));
+      this.actionGuidance = 'Carta do dealer registrada. Continue o fluxo do dealer.';
+      return;
+    }
+
+    if (this.dealerShouldDraw) {
+      this.setRoundPhase('DEALER_TURN');
+      this.actionGuidance =
+        dealerEvaluation.total === 17 && dealerEvaluation.isSoft && this.activeRules.dealer_hits_soft_17
+          ? 'Dealer com soft 17 e regra ativa para compra. Clique em Dealer compra carta.'
+          : `Dealer com ${dealerEvaluation.total} pontos. Clique em Dealer compra carta.`;
+      return;
+    }
+
+    this.finalizeRoundAgainstDealerTotals();
+  }
+
+  private finalizeRoundAgainstDealerTotals(): void {
+    const playerEvaluation = this.playerHandEvaluation;
+    const dealerEvaluation = this.dealerHandEvaluation;
+
+    if (!dealerEvaluation) {
+      this.roundResolution = {
+        outcome: 'push',
+        reason: 'push_equal_total',
+        playerTotal: playerEvaluation.total,
+        dealerTotal: null,
+        playerCards: [...this.tableState.playerCards],
+        dealerCards: [...this.dealerCards],
+        hasDoubled: this.hasDoubled,
+        hasSurrendered: false,
+        hasNaturalBlackjack: false,
+        isPlayerBust: playerEvaluation.isBust,
+        isDealerBust: false,
+        isPush: true,
+        message: 'Nao foi possivel calcular o total final do dealer nesta rodada.',
+      };
+      this.setRoundPhase('ROUND_RESULT');
+      this.visualRoundPhase = 'round_finished';
+      this.actionGuidance = 'Resultado da rodada encerrado sem total final completo do dealer.';
+      return;
+    }
+
+    let outcome: RoundOutcome;
+    let reason: RoundResultReason;
+    let guidanceMessage: string;
+    let resultMessage: string;
+
+    if (dealerEvaluation.isBust) {
+      outcome = 'player_win';
+      reason = 'dealer_bust';
+      guidanceMessage = 'Dealer estourou. Rodada encerrada com vitoria do jogador.';
+      resultMessage = 'Dealer estourou acima de 21 pontos.';
+    } else if (playerEvaluation.total > dealerEvaluation.total) {
+      outcome = 'player_win';
+      reason = 'player_higher_total';
+      guidanceMessage = 'Jogador venceu por total superior ao dealer.';
+      resultMessage = `Jogador venceu no total: ${playerEvaluation.total} contra ${dealerEvaluation.total}.`;
+    } else if (playerEvaluation.total < dealerEvaluation.total) {
+      outcome = 'dealer_win';
+      reason = 'dealer_higher_total';
+      guidanceMessage = 'Dealer venceu por total superior ao jogador.';
+      resultMessage = `Dealer venceu no total: ${dealerEvaluation.total} contra ${playerEvaluation.total}.`;
+    } else {
+      outcome = 'push';
+      reason = 'push_equal_total';
+      guidanceMessage = 'Totais iguais. Rodada encerrada em empate/push.';
+      resultMessage = `Empate em ${playerEvaluation.total} pontos para ambos.`;
+    }
+
+    this.roundResolution = {
+      outcome,
+      reason,
+      playerTotal: playerEvaluation.total,
+      dealerTotal: dealerEvaluation.total,
+      playerCards: [...this.tableState.playerCards],
+      dealerCards: [...this.dealerCards],
+      hasDoubled: this.hasDoubled,
+      hasSurrendered: false,
+      hasNaturalBlackjack: false,
+      isPlayerBust: false,
+      isDealerBust: dealerEvaluation.isBust,
+      isPush: outcome === 'push',
+      message: resultMessage,
+    };
+
+    this.setRoundPhase('ROUND_RESULT');
+    this.visualRoundPhase = 'round_finished';
+    this.playerCardsLocked = true;
+    this.doubleCardPending = false;
+    this.actionGuidance = guidanceMessage;
   }
 
   private resolveAnalysisErrorMessage(error: unknown): string {
@@ -415,6 +1501,52 @@ export class AppComponent {
     }
 
     return 'Ocorreu um erro ao processar a análise.';
+  }
+
+  private executePreRoundAnalysis(isAutomatic: boolean): PreRoundAnalysisSnapshot | null {
+    if (!this.showStartHandCard) {
+      return null;
+    }
+
+    const preRoundAnalysis = buildPreRoundAnalysis(this.tableState, {
+      number_of_decks: this.activeRules.number_of_decks ?? this.config.number_of_decks,
+      bankroll: this.config.bankroll,
+      minimum_bet: this.config.minimum_bet,
+      risk_profile: this.config.risk_profile,
+      is_auto_generated: isAutomatic,
+    });
+
+    this.preRoundAnalysis = preRoundAnalysis;
+    this.preRoundAnalysisSignature = this.buildPreRoundAnalysisSignature();
+    this.latestBettingData = preRoundAnalysis.betting;
+    return preRoundAnalysis;
+  }
+
+  private buildPreRoundAnalysisSignature(): string {
+    const shoeCountsSignature = this.tableState.shoeCounts
+      .map((item) => `${item.value}:${item.count}`)
+      .join('|');
+
+    return [
+      this.tableState.seenCards.join(','),
+      shoeCountsSignature,
+      this.config.number_of_decks,
+      this.config.bankroll,
+      this.config.minimum_bet,
+      this.config.risk_profile,
+    ].join('#');
+  }
+
+  private clonePreRoundAnalysis(analysis: PreRoundAnalysisSnapshot): PreRoundAnalysisSnapshot {
+    return {
+      ...analysis,
+      counting: {
+        ...analysis.counting,
+      },
+      betting: {
+        ...analysis.betting,
+      },
+    };
   }
 
   getCardTargetLabel(target: CardTarget): string {

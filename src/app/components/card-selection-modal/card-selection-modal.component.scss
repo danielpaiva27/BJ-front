@@ -1,0 +1,8 @@
+.modal-backdrop{position:fixed;inset:0;z-index:20;display:grid;place-items:center;background:rgba(13,27,42,.48);padding:1rem}
+.card-modal{width:min(560px,100%);background:#fff;border:1px solid #d7dee4;border-radius:8px;padding:1rem;box-shadow:0 18px 40px rgba(13,27,42,.24)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:.8rem}
+.modal-header h2{margin:0;font-size:1.05rem;color:#0d1b2a}
+.close-button{background:#dde7ee;color:#0d1b2a;padding:.5rem .75rem}
+.card-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:.55rem}
+.card-option{display:flex;flex-direction:column;gap:.2rem;min-height:4rem;padding:.7rem;background:#1f7a8c;color:#fff;border:0;border-radius:8px;font-weight:600;cursor:pointer}
+.card-option:disabled{background:#a8b7c2;cursor:not-allowed}.value{font-weight:700}.aux,.count{font-size:.82rem}

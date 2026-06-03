@@ -1,17 +1,30 @@
 import { CardValue } from "../models/blackjack-table.models";
 import {
+  buildPreRoundAnalysis,
   buildAnalyzeHandRequest,
   createInitialShoeCounts,
   createInitialTableState,
+  evaluatePlayerHand,
+  getAvailablePlayerActions,
   getTotalRemainingCards,
+  isCardTargetAllowedForRoundPhase,
+  isGuidedRoundActionAllowed,
   registerCardAction,
   resetRound,
   resetShoe,
+  shouldDealerHit,
   startNewRoundKeepingShoe,
+  transitionGuidedRoundPhase,
   undoLastRegisteredCard,
 } from "./blackjack-table.utils";
 
 describe("blackjack-table.utils", () => {
+  function availableActionsFromResult(
+    result: ReturnType<typeof getAvailablePlayerActions>,
+  ): Array<ReturnType<typeof getAvailablePlayerActions>[number]["action"]> {
+    return result.filter((item) => item.isAvailable).map((item) => item.action);
+  }
+
   it("initializes shoe counts for one deck", () => {
     const shoeCounts = createInitialShoeCounts(1);
     const ten = shoeCounts.find((item) => item.value === "10");
@@ -37,9 +50,42 @@ describe("blackjack-table.utils", () => {
     const result = registerCardAction(state, "A", "player", "2026-06-02T00:00:00.000Z");
 
     expect(result.ok).toBeTrue();
+    expect(state.roundPhase).toBe("SETUP");
     expect(result.state.playerCards).toEqual(["A"]);
     expect(result.state.history.length).toBe(1);
     expect(result.state.shoeCounts.find((item) => item.value === "A")?.count).toBe(3);
+  });
+
+  it("defines guided round phase permissions", () => {
+    expect(isGuidedRoundActionAllowed("SETUP", "START_SHOE")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("SETUP", "HIT")).toBeFalse();
+    expect(isGuidedRoundActionAllowed("SHOE_ACTIVE", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("SHOE_ACTIVE", "REGISTER_INITIAL_CARD")).toBeFalse();
+    expect(isGuidedRoundActionAllowed("BETTING_DECISION", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("BETTING_DECISION", "REGISTER_SEEN_CARD")).toBeFalse();
+    expect(isGuidedRoundActionAllowed("PLAYER_DECISION", "HIT")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("PLAYER_HIT_PENDING", "DOUBLE")).toBeFalse();
+  });
+
+  it("defines card targets by guided round phase", () => {
+    expect(isCardTargetAllowedForRoundPhase("SHOE_ACTIVE", "seen")).toBeFalse();
+    expect(isCardTargetAllowedForRoundPhase("SEEN_CARDS_SETUP", "seen")).toBeTrue();
+    expect(isCardTargetAllowedForRoundPhase("SEEN_CARDS_SETUP", "player")).toBeFalse();
+    expect(isCardTargetAllowedForRoundPhase("BETTING_DECISION", "seen")).toBeFalse();
+    expect(isCardTargetAllowedForRoundPhase("PLAYER_DOUBLE_PENDING", "player")).toBeTrue();
+    expect(isCardTargetAllowedForRoundPhase("PLAYER_DECISION", "player")).toBeFalse();
+  });
+
+  it("transitions guided round phases for core actions", () => {
+    expect(transitionGuidedRoundPhase("SETUP", "START_SHOE")).toBe("SHOE_ACTIVE");
+    expect(transitionGuidedRoundPhase("SHOE_ACTIVE", "START_SEEN_CARDS_SETUP")).toBe("SEEN_CARDS_SETUP");
+    expect(transitionGuidedRoundPhase("SHOE_ACTIVE", "CONFIRM_BET")).toBe("INITIAL_DEAL");
+    expect(transitionGuidedRoundPhase("SEEN_CARDS_SETUP", "CONFIRM_SEEN_CARDS")).toBe("BETTING_DECISION");
+    expect(transitionGuidedRoundPhase("BETTING_DECISION", "START_SEEN_CARDS_SETUP")).toBe("SEEN_CARDS_SETUP");
+    expect(transitionGuidedRoundPhase("BETTING_DECISION", "CONFIRM_BET")).toBe("INITIAL_DEAL");
+    expect(transitionGuidedRoundPhase("PLAYER_DECISION", "HIT")).toBe("PLAYER_HIT_PENDING");
+    expect(transitionGuidedRoundPhase("PLAYER_DECISION", "STAND")).toBe("DEALER_REVEAL_PENDING");
+    expect(transitionGuidedRoundPhase("PLAYER_DECISION", "SURRENDER")).toBe("ROUND_RESULT");
   });
 
   it("returns an error when trying to draw unavailable card value", () => {
@@ -95,9 +141,32 @@ describe("blackjack-table.utils", () => {
 
     expect(nextRound.playerCards).toEqual([]);
     expect(nextRound.dealerUpcard).toBeNull();
+    expect(nextRound.seenCards).toEqual(["10", "A"]);
     expect(nextRound.shoeCounts.find((item) => item.value === "10")?.count).toBe(15);
     expect(nextRound.shoeCounts.find((item) => item.value === "A")?.count).toBe(3);
     expect(nextRound.gamePhase).toBe("shoe_active");
+
+    const nextRoundAgain = startNewRoundKeepingShoe(nextRound);
+    expect(nextRoundAgain.seenCards).toEqual(["10", "A"]);
+    expect(nextRoundAgain.shoeCounts.find((item) => item.value === "10")?.count).toBe(15);
+    expect(nextRoundAgain.shoeCounts.find((item) => item.value === "A")?.count).toBe(3);
+  });
+
+  it("does not duplicate dealer revealed cards already present in seen cards when starting next round", () => {
+    const state = createInitialTableState(1);
+    const withPlayerOne = registerCardAction(state, "10", "player").state;
+    const withPlayerTwo = registerCardAction(withPlayerOne, "7", "player").state;
+    const withDealerUpcard = registerCardAction(withPlayerTwo, "6", "dealer_upcard").state;
+    const withDealerReveal = registerCardAction(withDealerUpcard, "8", "dealer_revealed").state;
+
+    expect(withDealerReveal.seenCards).toEqual(["8"]);
+
+    const nextRound = startNewRoundKeepingShoe(withDealerReveal);
+
+    expect(nextRound.seenCards).toEqual(["8", "10", "7", "6"]);
+    expect(nextRound.dealerRevealedCards).toEqual([]);
+    expect(nextRound.playerCards).toEqual([]);
+    expect(nextRound.dealerUpcard).toBeNull();
   });
 
   it("resets the entire shoe to initial state", () => {
@@ -121,6 +190,124 @@ describe("blackjack-table.utils", () => {
 
     expect(getTotalRemainingCards(state)).toBe(52);
     expect(getTotalRemainingCards(withOneCard)).toBe(51);
+  });
+
+  it("builds neutral pre-round analysis for untouched shoe", () => {
+    const state = createInitialTableState(6);
+    const preRound = buildPreRoundAnalysis(state, {
+      number_of_decks: 6,
+      bankroll: 1000,
+      minimum_bet: 10,
+      risk_profile: "moderate",
+      generated_at: "2026-06-03T00:00:00.000Z",
+    });
+
+    expect(preRound.counting.running_count).toBe(0);
+    expect(preRound.counting.true_count).toBe(0);
+    expect(preRound.counting.cards_remaining).toBe(312);
+    expect(preRound.counting.deck_status).toBe("Neutro / favoravel baixo");
+    expect(preRound.betting.bet_units).toBe(1);
+    expect(preRound.betting.suggested_bet).toBe(10);
+    expect(preRound.generated_at).toBe("2026-06-03T00:00:00.000Z");
+  });
+
+  it("builds favorable pre-round analysis after many low cards are seen", () => {
+    let state = createInitialTableState(6);
+    const favorableSeenCards: CardValue[] = [
+      "2", "3", "4", "5", "6",
+      "2", "3", "4", "5", "6",
+      "2", "3", "4", "5", "6",
+    ];
+
+    for (const card of favorableSeenCards) {
+      state = registerCardAction(state, card, "seen").state;
+    }
+
+    const preRound = buildPreRoundAnalysis(state, {
+      number_of_decks: 6,
+      bankroll: 1000,
+      minimum_bet: 10,
+      risk_profile: "moderate",
+    });
+
+    expect(preRound.counting.running_count).toBe(15);
+    expect(preRound.counting.true_count).toBeGreaterThanOrEqual(2);
+    expect(preRound.counting.deck_status).toBe("Favoravel");
+    expect(preRound.betting.bet_units).toBe(2);
+    expect(preRound.betting.suggested_bet).toBe(20);
+  });
+
+  it("builds unfavorable pre-round analysis after many high cards are seen", () => {
+    let state = createInitialTableState(6);
+    const unfavorableSeenCards: CardValue[] = ["10", "10", "10", "A", "A", "10", "A"];
+
+    for (const card of unfavorableSeenCards) {
+      state = registerCardAction(state, card, "seen").state;
+    }
+
+    const preRound = buildPreRoundAnalysis(state, {
+      number_of_decks: 6,
+      bankroll: 1000,
+      minimum_bet: 10,
+      risk_profile: "conservative",
+    });
+
+    expect(preRound.counting.running_count).toBe(-7);
+    expect(preRound.counting.true_count).toBeLessThan(0);
+    expect(preRound.counting.deck_status).toBe("Desfavoravel");
+    expect(preRound.betting.bet_units).toBe(1);
+    expect(preRound.recommendation).toContain("Shoe nao favoravel");
+  });
+
+  it("applies bankroll safety cap in aggressive profile", () => {
+    let state = createInitialTableState(1);
+    const lowCards: CardValue[] = [
+      "2", "2", "2", "2",
+      "3", "3", "3", "3",
+      "4", "4", "4", "4",
+      "5", "5", "5", "5",
+      "6", "6", "6", "6",
+    ];
+
+    for (const card of lowCards) {
+      state = registerCardAction(state, card, "seen").state;
+    }
+
+    const preRound = buildPreRoundAnalysis(state, {
+      number_of_decks: 1,
+      bankroll: 1000,
+      minimum_bet: 50,
+      risk_profile: "aggressive",
+    });
+
+    expect(preRound.counting.true_count).toBeGreaterThan(5);
+    expect(preRound.betting.cap_applied).toBeTrue();
+    expect(preRound.betting.max_safe_exposure).toBe(80);
+    expect(preRound.betting.suggested_bet).toBe(80);
+    expect(preRound.betting.bet_units).toBe(1.6);
+  });
+
+  it("keeps true count stable when there are no remaining cards", () => {
+    const state = createInitialTableState(1);
+    const emptyShoeState = {
+      ...state,
+      seenCards: ["2"] as CardValue[],
+      shoeCounts: state.shoeCounts.map((item) => ({
+        ...item,
+        count: 0,
+      })),
+    };
+
+    const preRound = buildPreRoundAnalysis(emptyShoeState, {
+      number_of_decks: 1,
+      bankroll: 1000,
+      minimum_bet: 10,
+      risk_profile: "moderate",
+    });
+
+    expect(preRound.counting.cards_remaining).toBe(0);
+    expect(preRound.counting.decks_remaining).toBe(0);
+    expect(preRound.counting.true_count).toBe(0);
   });
 
   it("builds analyze payload from current table state", () => {
@@ -169,5 +356,224 @@ describe("blackjack-table.utils", () => {
     const payload = buildAnalyzeHandRequest(state);
 
     expect(payload).toBeNull();
+  });
+
+  it("returns only executable player actions in a valid initial decision", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["10", "6"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: false,
+        max_splits: 3,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual(["hit", "stand", "double"]);
+  });
+
+  it("hides Double when table rule double_allowed is disabled", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["5", "6"],
+      rules: {
+        double_allowed: false,
+        surrender_allowed: false,
+        max_splits: 3,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual(["hit", "stand"]);
+    expect(result.find((item) => item.action === "double")?.reason).toContain("Dobrar desativado");
+  });
+
+  it("hides Double when player has more than two cards", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["5", "3", "2"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: false,
+        max_splits: 3,
+      },
+      flags: {
+        hasHit: true,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual(["hit", "stand"]);
+    expect(result.find((item) => item.action === "double")?.reason).toContain("decisao inicial");
+  });
+
+  it("enables split only when pair and split rule are valid", () => {
+    const pairResult = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["8", "8"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: false,
+        max_splits: 3,
+      },
+    });
+
+    const nonPairResult = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["9", "7"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: false,
+        max_splits: 3,
+      },
+    });
+
+    expect(availableActionsFromResult(pairResult)).toContain("split");
+    expect(availableActionsFromResult(nonPairResult)).not.toContain("split");
+    expect(nonPairResult.find((item) => item.action === "split")?.reason).toContain("pares");
+  });
+
+  it("hides split after double state is active", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["8", "8"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+      flags: {
+        hasDoubled: true,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual([]);
+    expect(result.find((item) => item.action === "split")?.reason).toContain("decisao inicial");
+  });
+
+  it("hides split after surrender state is active", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["8", "8"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+      flags: {
+        hasSurrendered: true,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual([]);
+    expect(result.find((item) => item.action === "split")?.reason).toContain("Rodada encerrada");
+  });
+
+  it("hides all normal actions for natural blackjack", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["A", "10"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual([]);
+  });
+
+  it("hides all normal actions after bust", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["10", "9", "5"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual([]);
+  });
+
+  it("removes double, split and surrender after a hit", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["10", "6", "2"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+      flags: {
+        hasHit: true,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual(["hit", "stand"]);
+  });
+
+  it("follows surrender table rule toggle", () => {
+    const surrenderEnabled = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["10", "6"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+    });
+    const surrenderDisabled = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["10", "6"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: false,
+        max_splits: 3,
+      },
+    });
+
+    expect(availableActionsFromResult(surrenderEnabled)).toContain("surrender");
+    expect(availableActionsFromResult(surrenderDisabled)).not.toContain("surrender");
+  });
+
+  it("hides surrender after double state is active", () => {
+    const result = getAvailablePlayerActions({
+      phase: "PLAYER_DECISION",
+      playerCards: ["10", "6", "5"],
+      rules: {
+        double_allowed: true,
+        surrender_allowed: true,
+        max_splits: 3,
+      },
+      flags: {
+        hasDoubled: true,
+      },
+    });
+
+    expect(availableActionsFromResult(result)).toEqual([]);
+    expect(result.find((item) => item.action === "surrender")?.reason).toContain("antes de qualquer acao");
+  });
+
+  it("evaluates soft hands with ace and detects bust correctly", () => {
+    const softHand = evaluatePlayerHand(["5", "3", "A"]);
+    const bustedHand = evaluatePlayerHand(["10", "6", "10"]);
+
+    expect(softHand.total).toBe(19);
+    expect(softHand.isSoft).toBeTrue();
+    expect(softHand.isBust).toBeFalse();
+
+    expect(bustedHand.total).toBe(26);
+    expect(bustedHand.isSoft).toBeFalse();
+    expect(bustedHand.isBust).toBeTrue();
+  });
+
+  it("applies dealer soft-17 rule correctly", () => {
+    const soft17 = evaluatePlayerHand(["A", "6"]);
+    const hard17 = evaluatePlayerHand(["10", "7"]);
+
+    expect(shouldDealerHit(soft17, true)).toBeTrue();
+    expect(shouldDealerHit(soft17, false)).toBeFalse();
+    expect(shouldDealerHit(hard17, true)).toBeFalse();
+    expect(shouldDealerHit(hard17, false)).toBeFalse();
   });
 });

@@ -29,6 +29,12 @@ export const GLOSSARY = {
     popularTerm: 'Unidades de aposta fictícias',
     explanation: 'Medida simulada usada para comparar tamanhos de exposição sem usar dinheiro real.',
   },
+  simulatedEquivalent: {
+    term: 'Equivalente simulado',
+    popularTerm: 'Conversao ficticia das unidades',
+    explanation: 'Valor convertido das unidades teoricas usando a unidade base simulada.',
+    note: 'Nao representa aposta real; e apenas leitura academica da exposicao no simulador.',
+  },
   simulatedBankroll: {
     term: 'Banca simulada',
     popularTerm: 'Dinheiro fictício disponível',

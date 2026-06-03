@@ -25,3 +25,12 @@ Run `ng e2e` to execute the end-to-end tests via a platform of your choice. To u
 ## Further help
 
 To get more help on the Angular CLI use `ng help` or go check out the [Angular CLI Overview and Command Reference](https://angular.io/cli) page.
+
+## Backlog tecnico
+
+- Suporte visual completo a Split no fluxo guiado.
+- Suporte a multiplas maos independentes apos Split.
+- Regras de Double after Split por configuracao de mesa.
+- Suporte a Resplit com limite configuravel.
+- Regras especificas para Split de ases (hit split aces, resplit aces, etc.).
+- Variacoes de regras de Split por mesa/cassino para analise visual e execucao guiada.
