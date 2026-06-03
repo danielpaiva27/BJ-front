@@ -40,3 +40,7 @@ testem.log
 # System files
 .DS_Store
 Thumbs.db
+
+*.log
+ng-serve.err.log
+ng-serve.out.log
