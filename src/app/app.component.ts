@@ -7,6 +7,7 @@ import { finalize } from 'rxjs/operators';
 import { ActionAnalysis, AnalyzeHandResponse, GameRulesRequest, RiskProfile } from './models/blackjack-analysis.models';
 import { BlackjackTableState, CardTarget, CardValue } from './models/blackjack-table.models';
 import { BlackjackAnalysisService } from './services/blackjack-analysis.service';
+import { InfoTooltipComponent } from './components/info-tooltip/info-tooltip.component';
 import {
   buildAnalyzeHandRequest,
   createInitialTableState,
@@ -39,11 +40,38 @@ type VisualRoundPhase = 'shoe_active' | 'dealer_reveal' | 'round_finished';
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, InfoTooltipComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
 })
 export class AppComponent {
+  readonly cardTargetLabels: Record<CardTarget, string> = {
+    player: 'Jogador',
+    dealer_upcard: 'Carta aberta do dealer',
+    seen: 'Cartas vistas',
+    dealer_revealed: 'Cartas reveladas do dealer',
+  };
+
+  readonly actionLabels: Record<ActionAnalysis['action'], string> = {
+    hit: 'Pedir carta',
+    stand: 'Parar',
+    double: 'Dobrar',
+    split: 'Dividir',
+    surrender: 'Render-se',
+  };
+
+  readonly gamePhaseLabels: Record<BlackjackTableState['gamePhase'], string> = {
+    table_setup: 'Configuração da mesa',
+    shoe_active: 'Shoe ativo',
+    analysis_ready: 'Pronto para análise',
+  };
+
+  readonly riskProfileLabels: Record<RiskProfile, string> = {
+    conservative: 'Conservador',
+    moderate: 'Moderado',
+    aggressive: 'Agressivo',
+  };
+
   readonly defaultConfig: TableSetupConfig = {
     number_of_decks: 6,
     dealer_hits_soft_17: false,
@@ -68,9 +96,12 @@ export class AppComponent {
   analysisLoading = false;
   analysisResponse: AnalyzeHandResponse | null = null;
   actionGuidance = '';
+  cardRegistrationFeedback = '';
   visualRoundPhase: VisualRoundPhase = 'shoe_active';
   doubleCardPending = false;
   playerCardsLocked = false;
+  shoeNumber = 0;
+  recentRegisteredCardValue: CardValue | null = null;
 
   readonly cardTargets: CardTarget[] = ['player', 'dealer_upcard', 'seen', 'dealer_revealed'];
   readonly priorityActionOrder: ActionAnalysis['action'][] = ['hit', 'stand', 'double', 'split'];
@@ -103,12 +134,12 @@ export class AppComponent {
 
   get visualPhaseLabel(): string {
     if (this.visualRoundPhase === 'dealer_reveal') {
-      return 'dealer/reveal';
+      return 'Revelação das cartas do dealer';
     }
     if (this.visualRoundPhase === 'round_finished') {
-      return 'rodada finalizada';
+      return 'Rodada finalizada';
     }
-    return 'jogador em decisao';
+    return 'Jogador em decisão';
   }
 
   get decisionRanking(): ActionAnalysis[] {
@@ -148,12 +179,15 @@ export class AppComponent {
       gamePhase: 'shoe_active',
     };
     this.cardRegistrationError = '';
+    this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
-    this.actionGuidance = 'Shoe iniciado. Escolha um destino e registre as cartas observadas.';
+    this.actionGuidance = 'Shoe iniciado. Escolha onde registrar a próxima carta observada.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
     this.playerCardsLocked = false;
+    this.shoeNumber = 1;
+    this.recentRegisteredCardValue = null;
   }
 
   selectTarget(target: CardTarget): void {
@@ -166,24 +200,30 @@ export class AppComponent {
   registerCard(value: CardValue): void {
     if (this.visualRoundPhase === 'round_finished') {
       this.cardRegistrationError = 'Rodada finalizada. Inicie uma nova rodada para registrar novas cartas.';
+      this.cardRegistrationFeedback = '';
       return;
     }
 
     if (this.tableState.selectedTarget === 'player' && this.playerCardsLocked) {
-      this.cardRegistrationError = 'Mao do jogador bloqueada apos Double. Continue com fluxo de reveal do dealer.';
+      this.cardRegistrationError = 'Mão do jogador bloqueada após Dobrar. Continue registrando as cartas do dealer.';
+      this.cardRegistrationFeedback = '';
       return;
     }
 
     const result = registerCardAction(this.tableState, value, this.tableState.selectedTarget);
     this.tableState = result.state;
     this.cardRegistrationError = result.ok ? '' : result.error ?? 'Falha ao registrar carta.';
+    this.cardRegistrationFeedback = result.ok
+      ? `${this.getCardPrimaryDisplay(value)} registrada em ${this.getCardTargetLabel(this.tableState.selectedTarget)}.`
+      : '';
+    this.recentRegisteredCardValue = result.ok ? value : null;
     this.analysisError = '';
 
     if (result.ok && this.tableState.selectedTarget === 'player' && this.doubleCardPending) {
       this.doubleCardPending = false;
       this.playerCardsLocked = true;
       this.actionGuidance =
-        'Carta unica do Double registrada. A mao do jogador foi bloqueada para novas compras nesta rodada.';
+        'Carta única da ação Dobrar registrada. A mão do jogador foi bloqueada para novas compras nesta rodada.';
     }
   }
 
@@ -191,6 +231,8 @@ export class AppComponent {
     const result = undoLastRegisteredCard(this.tableState);
     this.tableState = result.state;
     this.cardRegistrationError = result.ok ? '' : result.error ?? 'Falha ao desfazer carta.';
+    this.cardRegistrationFeedback = result.ok ? 'Última carta desfeita.' : '';
+    this.recentRegisteredCardValue = null;
     this.analysisError = '';
   }
 
@@ -200,37 +242,52 @@ export class AppComponent {
       gamePhase: 'shoe_active',
     };
     this.cardRegistrationError = '';
+    this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
-    this.actionGuidance = 'Rodada resetada. Reconfigure as cartas da rodada atual.';
+    this.actionGuidance = 'Rodada reiniciada. Registre novamente as cartas da rodada atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
     this.playerCardsLocked = false;
+    this.recentRegisteredCardValue = null;
   }
 
   resetCurrentShoe(): void {
+    const shouldResetShoe = window.confirm(
+      'Isso vai zerar cartas vistas, contagem e restaurar o shoe completo. Deseja continuar?',
+    );
+
+    if (!shouldResetShoe) {
+      return;
+    }
+
     this.tableState = {
       ...resetShoe(this.tableState),
       gamePhase: 'shoe_active',
     };
     this.cardRegistrationError = '';
+    this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
-    this.actionGuidance = 'Shoe resetado para contagens iniciais.';
+    this.actionGuidance = 'Shoe reiniciado com as contagens iniciais.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
     this.playerCardsLocked = false;
+    this.shoeNumber += 1;
+    this.recentRegisteredCardValue = null;
   }
 
   startNextRound(): void {
     this.tableState = startNewRoundKeepingShoe(this.tableState);
     this.cardRegistrationError = '';
+    this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
     this.actionGuidance = 'Nova rodada iniciada mantendo o shoe atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
     this.playerCardsLocked = false;
+    this.recentRegisteredCardValue = null;
   }
 
   onHit(): void {
@@ -240,13 +297,13 @@ export class AppComponent {
     }
 
     if (this.playerCardsLocked) {
-      this.actionGuidance = 'Mao do jogador bloqueada por Double. Registre cartas do dealer.';
+      this.actionGuidance = 'Mão do jogador bloqueada por Dobrar. Registre as cartas do dealer.';
       return;
     }
 
     this.selectTarget('player');
     this.visualRoundPhase = 'shoe_active';
-    this.actionGuidance = 'Hit selecionado. Clique na carta comprada para registrar na mao do jogador.';
+    this.actionGuidance = 'Pedir carta selecionado. Clique na carta comprada para registrar na mão do jogador.';
   }
 
   onStand(): void {
@@ -257,7 +314,7 @@ export class AppComponent {
 
     this.selectTarget('dealer_revealed');
     this.visualRoundPhase = 'dealer_reveal';
-    this.actionGuidance = 'Stand selecionado. Registre as cartas reveladas do dealer.';
+    this.actionGuidance = 'Parar selecionado. Registre as cartas reveladas do dealer.';
   }
 
   onDouble(): void {
@@ -267,7 +324,7 @@ export class AppComponent {
     }
 
     if (this.playerCardsLocked) {
-      this.actionGuidance = 'Double ja aplicado nesta rodada; a mao do jogador esta bloqueada para nova compra.';
+      this.actionGuidance = 'Dobrar já foi aplicado nesta rodada; a mão do jogador está bloqueada para nova compra.';
       return;
     }
 
@@ -275,12 +332,12 @@ export class AppComponent {
     this.doubleCardPending = true;
     this.visualRoundPhase = 'shoe_active';
     this.actionGuidance =
-      'Double selecionado. Registre agora a unica carta adicional do jogador; apos isso a mao sera bloqueada.';
+      'Dobrar selecionado. Registre agora a única carta adicional do jogador; depois disso a mão será bloqueada.';
   }
 
   onSplit(): void {
     this.actionGuidance =
-      'Split selecionado. O suporte visual completo a multiplas maos sera disponibilizado em uma proxima etapa.';
+      'Dividir selecionado. O suporte visual completo a múltiplas mãos será disponibilizado em uma próxima etapa.';
   }
 
   onSurrender(): void {
@@ -288,17 +345,17 @@ export class AppComponent {
     this.doubleCardPending = false;
     this.playerCardsLocked = false;
     this.actionGuidance =
-      'Surrender registrado no fluxo visual. A rodada foi finalizada mantendo o historico de cartas no shoe.';
+      'Render-se registrado no fluxo visual. A rodada foi finalizada mantendo o histórico de cartas no shoe.';
   }
 
   analyzeCurrentDecision(): void {
     if (this.tableState.playerCards.length < 2) {
-      this.analysisError = 'Analise indisponivel: registre pelo menos 2 cartas do jogador.';
+      this.analysisError = 'Análise indisponível: registre pelo menos 2 cartas do jogador.';
       return;
     }
 
     if (!this.tableState.dealerUpcard) {
-      this.analysisError = 'Analise indisponivel: defina a dealer_upcard antes de analisar.';
+      this.analysisError = 'Análise indisponível: defina a carta aberta do dealer antes de analisar.';
       return;
     }
 
@@ -321,7 +378,7 @@ export class AppComponent {
     });
 
     if (!payload) {
-      this.analysisError = 'Dados insuficientes: informe ao menos 2 cartas para player e 1 dealer_upcard.';
+      this.analysisError = 'Dados insuficientes: informe ao menos 2 cartas do jogador e 1 carta aberta do dealer.';
       return;
     }
 
@@ -347,17 +404,49 @@ export class AppComponent {
   private resolveAnalysisErrorMessage(error: unknown): string {
     if (error instanceof HttpErrorResponse) {
       if (error.status === 0) {
-        return 'Nao foi possivel conectar a API. Verifique se o backend esta rodando.';
+        return 'Não foi possível conectar à API. Verifique se o backend está rodando.';
       }
 
       if (error.status === 422) {
-        return 'Entrada invalida. Confira as cartas e os parametros da simulacao.';
+        return 'Entrada inválida. Confira as cartas e os parâmetros da simulação.';
       }
 
-      return 'Ocorreu um erro ao processar a analise.';
+      return 'Ocorreu um erro ao processar a análise.';
     }
 
-    return 'Ocorreu um erro ao processar a analise.';
+    return 'Ocorreu um erro ao processar a análise.';
+  }
+
+  getCardTargetLabel(target: CardTarget): string {
+    return this.cardTargetLabels[target];
+  }
+
+  getActionLabel(action: ActionAnalysis['action']): string {
+    return this.actionLabels[action];
+  }
+
+  getActionDisplay(action: ActionAnalysis['action']): string {
+    return `${this.getActionLabel(action)} (${action})`;
+  }
+
+  formatRankingPosition(index: number): string {
+    return `${index + 1}º`;
+  }
+
+  getGamePhaseLabel(phase: BlackjackTableState['gamePhase']): string {
+    return this.gamePhaseLabels[phase];
+  }
+
+  getRiskProfileLabel(profile: RiskProfile | undefined): string {
+    return profile ? this.riskProfileLabels[profile] : '-';
+  }
+
+  getCardPrimaryDisplay(value: CardValue): string {
+    return value;
+  }
+
+  getCardAuxiliaryDisplay(value: CardValue): string {
+    return value === '10' ? '10/J/Q/K' : '';
   }
 
   getActionByName(actionName: ActionAnalysis['action']): ActionAnalysis | null {
@@ -377,6 +466,13 @@ export class AppComponent {
     }
     const signal = ev > 0 ? '+' : '';
     return `${signal}${ev.toFixed(4)}`;
+  }
+
+  formatExecutionTime(executionTimeMs: number | undefined): string {
+    if (executionTimeMs === undefined || executionTimeMs === null) {
+      return '-';
+    }
+    return `${executionTimeMs.toFixed(2)} ms`;
   }
 
   getExpectedValueClass(ev: number | undefined): string {

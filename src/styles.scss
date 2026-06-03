@@ -1,1 +1,155 @@
-/* You can add global styles to this file, and also import other style files */
+.selected-destination {
+	display: inline-block;
+	padding: 0.12rem 0.45rem;
+	border-radius: 999px;
+	background: #e1f0f4;
+	color: #133c55;
+}
+
+.value-card {
+	border: 1px solid #176c7c;
+	transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.value-card:not(:disabled):hover {
+	transform: translateY(-2px);
+	box-shadow: 0 8px 18px rgba(13, 27, 42, 0.18);
+}
+
+.value-card.recent {
+	outline: 3px solid #f2c94c;
+	outline-offset: 2px;
+}
+
+.aux {
+	font-size: 0.78rem;
+	opacity: 0.9;
+}
+
+.count {
+	display: flex;
+	gap: 0.35rem;
+	align-items: baseline;
+}
+
+.count strong {
+	font-size: 1rem;
+}
+
+.registration-feedback {
+	margin: 0.7rem 0 0;
+	border-left: 4px solid #0a7d46;
+	border-radius: 6px;
+	background: #edf8f2;
+	color: #0a5f38;
+	padding: 0.5rem 0.7rem;
+	font-size: 0.88rem;
+	font-weight: 700;
+}
+
+.recommendation-hero {
+	border-left: 5px solid #0a7d46;
+	border-radius: 8px;
+	background: #edf8f2;
+	padding: 0.85rem 1rem;
+}
+
+.recommendation-hero strong {
+	display: block;
+	margin-top: 0.25rem;
+	color: #0a5f38;
+	font-size: 1.45rem;
+}
+
+.recommendation-label {
+	color: #3f4d5c;
+	font-size: 0.82rem;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.recommendation-metrics {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+	gap: 0.75rem;
+}
+
+.recommendation-metrics div {
+	border-bottom: 1px solid #dce6ee;
+	padding-bottom: 0.45rem;
+}
+
+.recommendation-metrics span {
+	display: block;
+	color: #3f4d5c;
+	font-size: 0.82rem;
+}
+
+.recommendation-metrics strong {
+	display: block;
+	margin-top: 0.2rem;
+	font-size: 1.05rem;
+}
+
+.recommendation-explanation {
+	margin: 0;
+	color: #243a47;
+	line-height: 1.45;
+}
+
+.ranking-position {
+	display: inline-block;
+	min-width: 2rem;
+	margin-right: 0.35rem;
+	color: #133c55;
+	font-weight: 800;
+}
+
+.best-action-row {
+	background: #edf8f2;
+	box-shadow: inset 4px 0 0 #0a7d46;
+}
+
+.theoretical-units {
+	background: #eef7f4;
+	border-radius: 6px;
+	padding: 0.45rem 0.55rem;
+}
+
+.theoretical-units strong {
+	color: #0a5f38;
+	font-size: 1.2rem;
+}
+
+.simulation-note {
+	margin: 0.9rem 0 0;
+	border-left: 4px solid #1f7a8c;
+	border-radius: 6px;
+	background: #eef5fa;
+	color: #16324f;
+	padding: 0.55rem 0.7rem;
+	font-size: 0.88rem;
+}
+
+.control-help {
+	display: grid;
+	gap: 0.25rem;
+	max-width: 260px;
+}
+
+.control-help span {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+}
+
+.control-help small {
+	color: #3f4d5c;
+	line-height: 1.35;
+}
+
+.field-hint {
+	color: #3f4d5c;
+	font-size: 0.78rem;
+	line-height: 1.35;
+}

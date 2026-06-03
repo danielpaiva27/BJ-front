@@ -48,8 +48,9 @@ describe('AppComponent', () => {
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
 
-    expect(compiled.textContent).toContain('ferramenta academica e simulacional');
-    expect(compiled.textContent).toContain('Cartas restantes no shoe');
+    expect(compiled.textContent).toContain('Ferramenta acadêmica e simulacional');
+    expect(compiled.textContent).toContain('Estado do shoe');
+    expect(compiled.textContent).toContain('Cartas restantes');
     expect(compiled.textContent).toContain('Cartas registradas');
   });
 
@@ -62,7 +63,7 @@ describe('AppComponent', () => {
 
     const compiled = fixture.nativeElement as HTMLElement;
     expect(app.tableState.gamePhase).toBe('shoe_active');
-    expect(compiled.textContent).toContain('Fase de registro de cartas');
+    expect(compiled.textContent).toContain('Registro de cartas');
   });
 
   it('should register card in selected target and decrement count', () => {
@@ -112,7 +113,7 @@ describe('AppComponent', () => {
     app.onHit();
 
     expect(app.tableState.selectedTarget).toBe('player');
-    expect(app.actionGuidance).toContain('Hit selecionado');
+    expect(app.actionGuidance).toContain('Pedir carta selecionado');
   });
 
   it('should move to dealer reveal flow on Stand', () => {
@@ -137,7 +138,7 @@ describe('AppComponent', () => {
 
     expect(app.playerCardsLocked).toBeTrue();
     expect(app.tableState.playerCards).toEqual(['9']);
-    expect(app.cardRegistrationError).toContain('bloqueada apos Double');
+    expect(app.cardRegistrationError).toContain('bloqueada após Dobrar');
   });
 
   it('should finalize visual round on Surrender', () => {
@@ -148,7 +149,7 @@ describe('AppComponent', () => {
     app.onSurrender();
 
     expect(app.visualRoundPhase).toBe('round_finished');
-    expect(app.actionGuidance).toContain('Surrender registrado');
+    expect(app.actionGuidance).toContain('Render-se registrado');
   });
 
   it('should call API and store response when decision analysis succeeds', () => {
@@ -216,7 +217,7 @@ describe('AppComponent', () => {
     app.analyzeCurrentDecision();
 
     expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
-    expect(app.analysisError).toContain('defina a dealer_upcard');
+    expect(app.analysisError).toContain('defina a carta aberta do dealer');
   });
 
   it('should show friendly error when API analysis fails', () => {
@@ -234,7 +235,7 @@ describe('AppComponent', () => {
 
     expect(blackjackAnalysisServiceSpy.analyzeHand).toHaveBeenCalled();
     expect(app.analysisResponse).toBeNull();
-    expect(app.analysisError).toContain('Ocorreu um erro ao processar a analise');
+    expect(app.analysisError).toContain('Ocorreu um erro ao processar a análise');
     expect(app.analysisLoading).toBeFalse();
   });
 
@@ -253,7 +254,7 @@ describe('AppComponent', () => {
     app.registerCard('10');
     app.analyzeCurrentDecision();
 
-    expect(app.analysisError).toBe('Nao foi possivel conectar a API. Verifique se o backend esta rodando.');
+    expect(app.analysisError).toBe('Não foi possível conectar à API. Verifique se o backend está rodando.');
   });
 
   it('should show validation message for 422 response', () => {
@@ -271,7 +272,7 @@ describe('AppComponent', () => {
     app.registerCard('10');
     app.analyzeCurrentDecision();
 
-    expect(app.analysisError).toBe('Entrada invalida. Confira as cartas e os parametros da simulacao.');
+    expect(app.analysisError).toBe('Entrada inválida. Confira as cartas e os parâmetros da simulação.');
   });
 
   it('should render decision panel with recommended action and ranking metrics', () => {
@@ -293,6 +294,20 @@ describe('AppComponent', () => {
           standard_error: 0.01,
           confidence_interval_95: [0.1, 0.14],
         },
+        {
+          action: 'hit',
+          ev: -0.2,
+          win_rate: 0.35,
+          lose_rate: 0.55,
+          push_rate: 0.1,
+          simulations: 1000,
+          wins: 350,
+          losses: 550,
+          pushes: 100,
+          std_dev: 1,
+          standard_error: 0.01,
+          confidence_interval_95: [-0.22, -0.18],
+        },
       ],
       recommendation: {
         best_action: 'stand',
@@ -309,10 +324,11 @@ describe('AppComponent', () => {
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
 
-    expect(compiled.textContent).toContain('Painel de decisoes da engine');
-    expect(compiled.textContent).toContain('Decisao recomendada:');
-    expect(compiled.textContent).toContain('stand');
+    expect(compiled.textContent).toContain('Decisão da engine');
+    expect(compiled.textContent).toContain('Ação recomendada');
+    expect(compiled.textContent).toContain('Parar (stand)');
+    expect(compiled.textContent).toContain('1º');
     expect(compiled.textContent).toContain('+0.1200');
-    expect(compiled.textContent).toContain('indisponivel nesta simulacao');
+    expect(compiled.textContent).toContain('Pedir carta (hit)');
   });
 });

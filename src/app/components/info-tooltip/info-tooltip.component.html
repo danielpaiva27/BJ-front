@@ -1,0 +1,22 @@
+<span class="info-tooltip" (mouseleave)="hide()">
+  <button
+    type="button"
+    class="info-button"
+    [attr.aria-label]="'Explicar termo: ' + entry.term"
+    [attr.aria-describedby]="isOpen ? tooltipId : null"
+    [attr.aria-expanded]="isOpen"
+    (click)="toggle()"
+    (focus)="show()"
+    (blur)="hide()"
+    (mouseenter)="show()"
+  >
+    i
+  </button>
+
+  <span *ngIf="isOpen" class="tooltip-panel" [id]="tooltipId" role="tooltip">
+    <strong>{{ entry.term }}</strong>
+    <span><b>Termo popular:</b> {{ entry.popularTerm }}.</span>
+    <span><b>Significado:</b> {{ entry.explanation }}</span>
+    <span *ngIf="entry.note"><b>Observação:</b> {{ entry.note }}</span>
+  </span>
+</span>
