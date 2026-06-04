@@ -1,39 +1,4 @@
-.page{padding:2rem;background:#f4f6f8;color:#0d1b2a}
-.app-header,.setup-card{max-width:1180px;margin:0 auto}
-.app-header{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,430px);gap:1rem;align-items:start;margin-bottom:1rem}
-h1,h2,h3{margin:0}
-.subtitle{margin:.35rem 0 0;color:#3f4d5c}
-.academic-warning{margin:0;border-left:4px solid #1f7a8c;background:#eef7f4;padding:.7rem .8rem;border-radius:6px;font-size:.88rem}
-.dashboard{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:1rem;max-width:1180px;margin:0 auto}
-.section-card{background:#fff;border:1px solid #d7dee4;border-radius:8px;padding:1rem}
-.setup-card,.shoe-state-card{grid-column:1/-1}.register-card,.table-card,.decision-card,.ranking-card,.risk-card,.metadata-card{grid-column:span 6}
-.section-heading,.setup-form,.form-group,.recommended-decision,.metric-group{display:grid;gap:.75rem}
-.section-heading{gap:.25rem;margin-bottom:.9rem}.section-heading p{margin:0;color:#3f4d5c;font-size:.9rem}
-.form-group{padding-top:.85rem;border-top:1px solid #e4ebf0}
-.setup-grid,.toggle-grid,.stat-grid,.table-state-grid,.metadata-grid,.analysis-grid,.game-actions-grid,.card-grid{display:grid;gap:.75rem}
-.setup-grid,.toggle-grid{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-.stat-grid,.table-state-grid,.metadata-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
-.analysis-grid{grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1rem}.game-actions-grid,.card-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.55rem}
-label{display:flex;flex-direction:column;gap:.35rem;font-size:.9rem;color:#243a47}
-input,select{height:2.25rem;border:1px solid #bec9d4;border-radius:8px;padding:0 .65rem}
-.checkbox{flex-direction:row;align-items:center;gap:.5rem;min-height:2.25rem}
-.actions,.controls-panel,.target-panel{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem}.target-panel{margin-bottom:.9rem}
-button{border:0;border-radius:8px;background:#133c55;color:#fff;font-weight:600;padding:.7rem 1rem;cursor:pointer}
-button:disabled{background:#9caab4;cursor:not-allowed}
-.control-button{background:#2f4858}.control-button.analyze{background:#0a7d46;margin-top:.25rem}
-.target-button{background:#dde7ee;color:#0d1b2a;padding:.5rem .8rem}.target-button.active,.badge{background:#133c55;color:#fff}
-.value-card{display:flex;flex-direction:column;gap:.2rem;min-height:4rem;padding:.7rem;background:#1f7a8c}
-.value-card:disabled{background:#a8b7c2}.value{font-weight:700}.count{font-size:.85rem}
-.stat-item,.table-state-grid div,.metadata-grid div{display:grid;gap:.2rem}
-.stat-item span,.table-state-grid span,.metadata-grid span,.decision-highlight span,.recommended-decision div>span,.metric-group span{color:#3f4d5c;font-size:.82rem}
-.stat-item strong{color:#133c55}
-.game-actions-panel{display:grid;gap:.6rem;margin-top:1rem}.action-button{background:#1f7a8c}
-.recommended-decision div{display:grid;gap:.25rem}.recommended-decision p{margin:0}
-.badge{display:inline-block;width:fit-content;padding:.22rem .55rem;border-radius:999px;font-weight:700}
-.table-scroll{overflow-x:auto}table{width:100%;min-width:640px;border-collapse:collapse;font-size:.88rem}
-th,td{border-bottom:1px solid #dce6ee;padding:.55rem .45rem;text-align:left}th{background:#f0f6fa}
-.metric-group p{display:flex;justify-content:space-between;gap:1rem;margin:0;border-bottom:1px solid #edf2f6}.theoretical-note{display:block;color:#3f4d5c;font-size:.84rem}
-.api-details{margin-top:.9rem}.api-details summary{cursor:pointer;color:#133c55;font-weight:700}.api-details pre{white-space:pre-wrap;word-break:break-word}
-.error{color:#a4161a;font-weight:600}.loading{color:#133c55;font-weight:600;margin:.7rem 0 0}.guidance{margin:.7rem 0 0;color:#16324f;background:#edf5fb;border-left:4px solid #1f7a8c;padding:.55rem .7rem;border-radius:6px;font-size:.88rem}
-.ev-positive{color:#0f8a4b}.ev-negative{color:#a4161a}.ev-neutral{color:#3f4d5c}
-@media(max-width:860px){.page{padding:1rem}.app-header{grid-template-columns:1fr}.register-card,.table-card,.decision-card,.ranking-card,.risk-card,.metadata-card{grid-column:1/-1}}
+:host {
+	display: block;
+	min-height: 100vh;
+}

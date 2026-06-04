@@ -222,6 +222,13 @@ export class AppComponent {
     return this.roundPhaseLabels[this.currentRoundPhase];
   }
 
+  get phaseSummaryLabel(): string {
+    const gamePhaseLabel = this.getGamePhaseLabel(this.tableState.gamePhase);
+    return gamePhaseLabel === this.visualPhaseLabel
+      ? gamePhaseLabel
+      : `${gamePhaseLabel} · ${this.visualPhaseLabel}`;
+  }
+
   get playerHandEvaluation() {
     return evaluatePlayerHand(this.tableState.playerCards);
   }

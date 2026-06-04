@@ -1,7 +1,10 @@
 <div class="modal-backdrop" *ngIf="isOpen" (click)="close()">
   <section class="card-modal" role="dialog" aria-modal="true" [attr.aria-label]="title" (click)="$event.stopPropagation()">
     <header class="modal-header">
-      <h2>{{ title }}</h2>
+      <div class="modal-title-block">
+        <span class="modal-kicker">Card selector</span>
+        <h2>{{ title }}</h2>
+      </div>
       <button type="button" class="close-button" aria-label="Fechar selecao de carta" (click)="close()">Fechar</button>
     </header>
 
@@ -33,6 +36,7 @@
         role="listitem"
         *ngFor="let item of shoeCounts"
         [disabled]="item.count === 0"
+        [attr.data-card]="item.value"
         [attr.aria-label]="'Selecionar ' + item.display + ', restantes ' + item.count"
         (click)="selectCard(item)"
       >

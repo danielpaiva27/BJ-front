@@ -1,8 +1,14 @@
 <main class="page">
   <header class="app-header">
-    <div>
-      <h1>Blackjack Risk Engine</h1>
-      <p class="subtitle">Simulador acadêmico de decisão probabilística</p>
+    <div class="brand-lockup">
+      <div class="brand-mark" aria-hidden="true">
+        <span>21</span>
+      </div>
+      <div class="brand-copy">
+        <p class="eyebrow">Decision Lab · Live Blackjack</p>
+        <h1>Blackjack Risk Engine</h1>
+        <p class="subtitle">Probabilidade, risco e valor esperado no blackjack live</p>
+      </div>
     </div>
     <p class="academic-warning">
       Ferramenta acadêmica e simulacional. Não realiza apostas, não se conecta a cassinos online e não garante lucro.
@@ -116,7 +122,7 @@
       <section class="section-card shoe-state-card">
         <div class="section-heading">
           <h2>Estado do shoe <app-info-tooltip termKey="shoe" /></h2>
-          <p>{{ getGamePhaseLabel(tableState.gamePhase) }} · {{ visualPhaseLabel }}</p>
+          <p>{{ phaseSummaryLabel }}</p>
         </div>
 
         <div class="stat-grid">
@@ -164,9 +170,16 @@
           <p>Use esta etapa para informar cartas que já saíram neste shoe antes da rodada atual.</p>
         </div>
 
-        <div class="stat-item">
+        <div class="stat-item seen-card-summary">
           <span>Cartas já vistas registradas</span>
-          <strong>{{ tableState.seenCards.join(', ') || '-' }}</strong>
+          <div class="seen-cards-strip" [class.empty]="tableState.seenCards.length === 0">
+            <ng-container *ngIf="tableState.seenCards.length > 0; else noSeenCardsRegistered">
+              <span class="playing-card-chip" *ngFor="let card of tableState.seenCards">{{ card }}</span>
+            </ng-container>
+            <ng-template #noSeenCardsRegistered>
+              <strong>Nenhuma carta registrada</strong>
+            </ng-template>
+          </div>
         </div>
 
         <div class="stat-grid live-counting-panel" *ngIf="liveShoeCounting as liveCount">
@@ -359,7 +372,13 @@
           </small>
         </div>
 
-        <div class="stat-item" *ngIf="showRoundResolutionCard">
+        <div
+          class="stat-item round-result-card"
+          *ngIf="showRoundResolutionCard"
+          [class.result-win]="roundResolution?.outcome === 'player_win'"
+          [class.result-loss]="roundResolution?.outcome === 'dealer_win'"
+          [class.result-push]="roundResolution?.outcome === 'push'"
+        >
           <span>Resumo da rodada</span>
           <strong>{{ roundResolutionTitle }}</strong>
           <small class="theoretical-note">{{ roundResolutionDescription }}</small>
@@ -370,22 +389,50 @@
           </div>
         </div>
 
-        <div class="table-state-grid">
-          <div>
+        <div class="table-state-grid hand-state-grid">
+          <div class="hand-panel player-hand">
             <span>Jogador</span>
-            <strong>{{ tableState.playerCards.join(', ') || '-' }}</strong>
+            <div class="hand-cards" [class.empty]="tableState.playerCards.length === 0">
+              <ng-container *ngIf="tableState.playerCards.length > 0; else noPlayerCards">
+                <span class="playing-card-chip large" *ngFor="let card of tableState.playerCards">{{ card }}</span>
+              </ng-container>
+              <ng-template #noPlayerCards>
+                <strong>-</strong>
+              </ng-template>
+            </div>
           </div>
-          <div>
+          <div class="hand-panel dealer-upcard">
             <span>Carta aberta do dealer</span>
-            <strong>{{ tableState.dealerUpcard || '-' }}</strong>
+            <div class="hand-cards" [class.empty]="!tableState.dealerUpcard">
+              <span class="playing-card-chip large dealer" *ngIf="tableState.dealerUpcard; else noDealerUpcard">
+                {{ tableState.dealerUpcard }}
+              </span>
+              <ng-template #noDealerUpcard>
+                <strong>-</strong>
+              </ng-template>
+            </div>
           </div>
-          <div>
+          <div class="hand-panel seen-hand">
             <span>Cartas vistas</span>
-            <strong>{{ tableState.seenCards.join(', ') || '-' }}</strong>
+            <div class="hand-cards compact" [class.empty]="tableState.seenCards.length === 0">
+              <ng-container *ngIf="tableState.seenCards.length > 0; else noSeenCardsOnTable">
+                <span class="playing-card-chip" *ngFor="let card of tableState.seenCards">{{ card }}</span>
+              </ng-container>
+              <ng-template #noSeenCardsOnTable>
+                <strong>-</strong>
+              </ng-template>
+            </div>
           </div>
-          <div>
+          <div class="hand-panel dealer-hand">
             <span>Cartas reveladas do dealer</span>
-            <strong>{{ tableState.dealerRevealedCards.join(', ') || '-' }}</strong>
+            <div class="hand-cards compact" [class.empty]="tableState.dealerRevealedCards.length === 0">
+              <ng-container *ngIf="tableState.dealerRevealedCards.length > 0; else noDealerRevealedCards">
+                <span class="playing-card-chip dealer" *ngFor="let card of tableState.dealerRevealedCards">{{ card }}</span>
+              </ng-container>
+              <ng-template #noDealerRevealedCards>
+                <strong>-</strong>
+              </ng-template>
+            </div>
           </div>
         </div>
 
@@ -412,8 +459,10 @@
           <div class="game-actions-grid" *ngIf="visiblePlayerActions.length > 0">
             <button
               type="button"
-              class="action-button"
+              class="action-button player-action-button"
               *ngFor="let action of visiblePlayerActions"
+              [attr.data-action]="action"
+              [class.recommended-action-button]="isRecommendedExecutableAction(action)"
               (click)="onPlayerAction(action)"
             >
               {{ getActionLabel(action) }}{{ isRecommendedExecutableAction(action) ? ' · recomendado' : '' }}
@@ -494,6 +543,7 @@
               <tr
                 *ngFor="let action of decisionRanking; let index = index"
                 [class.best-action-row]="action.action === recommendedAction"
+                [attr.data-action]="action.action"
               >
                 <td>
                   <span class="ranking-position">{{ formatRankingPosition(index) }}</span>
