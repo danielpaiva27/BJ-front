@@ -46,6 +46,55 @@ describe('CardSelectionModalComponent', () => {
     expect(component.cardSelected.emit).toHaveBeenCalledWith('10');
   });
 
+  it('should show live counting metrics when enabled', () => {
+    component.isOpen = true;
+    component.title = 'Registrar cartas vistas';
+    component.helperText = 'Selecione quantas cartas quiser. Clique em Concluir quando terminar.';
+    component.shoeCounts = createInitialShoeCounts(1);
+    component.showLiveCounting = true;
+    component.runningCount = 1;
+    component.trueCount = 1.02;
+    component.cardsRemaining = 51;
+    component.decksRemaining = 0.9808;
+
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(compiled.textContent).toContain('Registrar cartas vistas');
+    expect(compiled.textContent).toContain('Selecione quantas cartas quiser');
+    expect(compiled.textContent).toContain('Running Count');
+    expect(compiled.textContent).toContain('True Count');
+    expect(compiled.textContent).toContain('Cartas restantes');
+    expect(compiled.textContent).toContain('Decks restantes');
+    expect(compiled.textContent).toContain('51');
+  });
+
+  it('should emit undo event from the seen-cards footer button', () => {
+    component.isOpen = true;
+    component.shoeCounts = createInitialShoeCounts(1);
+    component.showUndoButton = true;
+    component.undoDisabled = false;
+    spyOn(component.undoLast, 'emit');
+
+    fixture.detectChanges();
+    const undoButton = fixture.nativeElement.querySelector('.secondary-button') as HTMLButtonElement;
+    undoButton.click();
+
+    expect(component.undoLast.emit).toHaveBeenCalled();
+  });
+
+  it('should emit close event from the conclude button', () => {
+    component.isOpen = true;
+    component.shoeCounts = createInitialShoeCounts(1);
+    spyOn(component.closed, 'emit');
+
+    fixture.detectChanges();
+    const doneButton = fixture.nativeElement.querySelector('.done-button') as HTMLButtonElement;
+    doneButton.click();
+
+    expect(component.closed.emit).toHaveBeenCalled();
+  });
+
   it('should emit close event when backdrop is clicked', () => {
     component.isOpen = true;
     component.shoeCounts = createInitialShoeCounts(1);

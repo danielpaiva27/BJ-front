@@ -5,6 +5,27 @@
       <button type="button" class="close-button" aria-label="Fechar selecao de carta" (click)="close()">Fechar</button>
     </header>
 
+    <p class="modal-helper" *ngIf="helperText">{{ helperText }}</p>
+
+    <div class="live-counting" *ngIf="showLiveCounting" aria-label="Contagem Hi-Lo ao vivo">
+      <div>
+        <span>Running Count</span>
+        <strong>{{ runningCount }}</strong>
+      </div>
+      <div>
+        <span>True Count</span>
+        <strong>{{ trueCount | number: '1.2-4' }}</strong>
+      </div>
+      <div>
+        <span>Cartas restantes</span>
+        <strong>{{ cardsRemaining }}</strong>
+      </div>
+      <div>
+        <span>Decks restantes</span>
+        <strong>{{ decksRemaining | number: '1.2-4' }}</strong>
+      </div>
+    </div>
+
     <div class="card-options" role="list">
       <button
         type="button"
@@ -20,5 +41,18 @@
         <span class="count">Restantes <strong>{{ item.count }}</strong></span>
       </button>
     </div>
+
+    <footer class="modal-footer">
+      <button
+        type="button"
+        class="secondary-button"
+        *ngIf="showUndoButton"
+        [disabled]="undoDisabled"
+        (click)="undo()"
+      >
+        Desfazer ultima carta vista
+      </button>
+      <button type="button" class="done-button" (click)="close()">Concluir</button>
+    </footer>
   </section>
 </div>

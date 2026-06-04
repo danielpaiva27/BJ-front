@@ -19,6 +19,7 @@ import { InfoTooltipComponent } from './components/info-tooltip/info-tooltip.com
 import {
   buildPreRoundAnalysis,
   buildAnalyzeHandRequest,
+  computeLiveShoeCounting,
   createInitialTableState,
   evaluatePlayerHand,
   getAvailablePlayerActions,
@@ -187,6 +188,10 @@ export class AppComponent {
 
   get remainingCards(): number {
     return getTotalRemainingCards(this.tableState);
+  }
+
+  get liveShoeCounting() {
+    return computeLiveShoeCounting(this.tableState);
   }
 
   get registeredCardsCount(): number {
@@ -504,7 +509,7 @@ export class AppComponent {
 
   get currentCardRequestTitle(): string {
     if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
-      return 'Carta ja vista do shoe atual';
+      return 'Registrar cartas vistas';
     }
 
     if (this.currentRoundPhase === 'INITIAL_DEAL') {
@@ -532,7 +537,7 @@ export class AppComponent {
 
   get currentCardRequestButtonLabel(): string {
     if (this.currentRoundPhase === 'SEEN_CARDS_SETUP') {
-      return 'Adicionar carta vista';
+      return 'Adicionar cartas vistas';
     }
 
     if (this.currentRoundPhase === 'INITIAL_DEAL') {
@@ -628,6 +633,21 @@ export class AppComponent {
     return isGuidedRoundActionAllowed(this.currentRoundPhase, action);
   }
 
+  get isSeenCardsContinuousModal(): boolean {
+    return this.currentRoundPhase === 'SEEN_CARDS_SETUP' && this.tableState.selectedTarget === 'seen';
+  }
+
+  get seenCardsModalHelperText(): string {
+    return this.isSeenCardsContinuousModal
+      ? 'Selecione quantas cartas quiser. Clique em Concluir quando terminar.'
+      : '';
+  }
+
+  get canUndoLastSeenCardInModal(): boolean {
+    const lastEntry = this.tableState.history[this.tableState.history.length - 1];
+    return this.isSeenCardsContinuousModal && lastEntry?.target === 'seen';
+  }
+
   enterSeenCardsSetup(): void {
     if (!this.canUseRoundAction('START_SEEN_CARDS_SETUP')) {
       this.actionGuidance = 'Acao indisponivel na fase atual da rodada.';
@@ -637,7 +657,7 @@ export class AppComponent {
     this.advanceRoundPhase('START_SEEN_CARDS_SETUP');
     this.selectTarget('seen');
     this.actionGuidance = 'Use esta etapa para informar cartas que ja sairam neste shoe antes da rodada atual.';
-    this.openCardSelectionModal('Carta ja vista do shoe atual');
+    this.openCardSelectionModal('Registrar cartas vistas');
   }
 
   confirmSeenCardsSetup(): void {
@@ -796,6 +816,11 @@ export class AppComponent {
   }
 
   handleModalCardSelected(value: CardValue): void {
+    if (this.isSeenCardsContinuousModal) {
+      this.registerCard(value);
+      return;
+    }
+
     const previousTitle = this.cardModalTitle;
     this.closeCardSelectionModal();
 
@@ -803,6 +828,16 @@ export class AppComponent {
       this.cardModalTitle = previousTitle;
       this.cardModalOpen = true;
     }
+  }
+
+  undoLastSeenCardFromModal(): void {
+    if (!this.canUndoLastSeenCardInModal) {
+      this.cardRegistrationError = 'Nao ha carta vista para desfazer neste modal.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
+    this.undoLastCard();
   }
 
   registerCard(value: CardValue): boolean {

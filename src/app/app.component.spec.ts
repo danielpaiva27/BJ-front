@@ -223,6 +223,109 @@ describe('AppComponent', () => {
     expect(app.tableState.shoeCounts.find((item) => item.value === '10')?.count).toBe(tenCountBefore);
   });
 
+  it('should keep seen-cards modal open while registering multiple seen cards', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+
+    const twoCountBefore = app.tableState.shoeCounts.find((item) => item.value === '2')?.count ?? 0;
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.cardModalTitle).toBe('Registrar cartas vistas');
+
+    app.handleModalCardSelected('2');
+    app.handleModalCardSelected('3');
+    app.handleModalCardSelected('10');
+
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.tableState.seenCards).toEqual(['2', '3', '10']);
+    expect(app.tableState.shoeCounts.find((item) => item.value === '2')?.count).toBe(twoCountBefore - 1);
+    expect(app.liveShoeCounting.running_count).toBe(1);
+    expect(app.liveShoeCounting.cards_remaining).toBe(309);
+    expect(Number.isFinite(app.liveShoeCounting.true_count)).toBeTrue();
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+
+    app.closeCardSelectionModal();
+    expect(app.cardModalOpen).toBeFalse();
+  });
+
+  it('should render live seen-cards counting outside the modal', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.handleModalCardSelected('2');
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(compiled.textContent).toContain('Running Count');
+    expect(compiled.textContent).toContain('True Count');
+    expect(compiled.textContent).toContain('Cartas restantes');
+    expect(compiled.textContent).toContain('Decks restantes');
+    expect(app.liveShoeCounting.running_count).toBe(1);
+  });
+
+  it('should ignore unavailable seen card selection and keep the modal open', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.tableState = {
+      ...app.tableState,
+      shoeCounts: app.tableState.shoeCounts.map((item) => (
+        item.value === 'A' ? { ...item, count: 0 } : item
+      )),
+    };
+
+    app.handleModalCardSelected('A');
+
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.tableState.seenCards).toEqual([]);
+    expect(app.tableState.shoeCounts.find((item) => item.value === 'A')?.count).toBe(0);
+    expect(app.liveShoeCounting.running_count).toBe(0);
+  });
+
+  it('should undo the latest seen card from the continuous modal', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.handleModalCardSelected('2');
+    app.handleModalCardSelected('3');
+    const threeCountAfterRegister = app.tableState.shoeCounts.find((item) => item.value === '3')?.count ?? 0;
+
+    expect(app.canUndoLastSeenCardInModal).toBeTrue();
+    app.undoLastSeenCardFromModal();
+
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.tableState.seenCards).toEqual(['2']);
+    expect(app.tableState.shoeCounts.find((item) => item.value === '3')?.count).toBe(threeCountAfterRegister + 1);
+    expect(app.liveShoeCounting.running_count).toBe(1);
+  });
+
+  it('should keep pre-round analysis stale after seen card changes without auto-calling decision analysis', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+
+    app.enterSeenCardsSetup();
+    app.handleModalCardSelected('2');
+
+    expect(app.preRoundAnalysisNeedsRefresh).toBeTrue();
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain(
+      'Novas cartas foram registradas desde a',
+    );
+  });
+
   it('should ask confirmation when starting hand with stale pre-round analysis', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;

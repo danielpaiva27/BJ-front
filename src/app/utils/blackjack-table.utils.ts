@@ -55,6 +55,13 @@ export interface PlayerActionAvailability {
   reason?: string;
 }
 
+export interface LiveShoeCounting {
+  running_count: number;
+  true_count: number;
+  cards_remaining: number;
+  decks_remaining: number;
+}
+
 export interface GetAvailablePlayerActionsInput {
   phase: GuidedRoundPhase;
   playerCards: CardValue[];
@@ -658,6 +665,21 @@ export function getTotalRemainingCards(state: BlackjackTableState): number {
 
 function computeRunningCount(seenCards: CardValue[]): number {
   return seenCards.reduce((total, cardValue) => total + HILO_CARD_VALUES[cardValue], 0);
+}
+
+export function computeLiveShoeCounting(state: BlackjackTableState): LiveShoeCounting {
+  const cardsRemaining = Math.max(0, getTotalRemainingCards(state));
+  const decksRemaining = cardsRemaining > 0 ? cardsRemaining / 52 : 0;
+  const runningCount = computeRunningCount(state.seenCards);
+  const trueCountRaw = decksRemaining > 0 ? runningCount / decksRemaining : 0;
+  const trueCount = Number.isFinite(trueCountRaw) ? Number(trueCountRaw.toFixed(4)) : 0;
+
+  return {
+    running_count: runningCount,
+    true_count: trueCount,
+    cards_remaining: cardsRemaining,
+    decks_remaining: Number(decksRemaining.toFixed(4)),
+  };
 }
 
 function resolveShoeStatus(trueCount: number): { shoeStatus: PreRoundShoeStatus; deckStatus: string } {

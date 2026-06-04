@@ -13,9 +13,18 @@ import { CardValue, ShoeValueCount } from '../../models/blackjack-table.models';
 export class CardSelectionModalComponent {
   @Input() isOpen = false;
   @Input() title = 'Selecionar carta';
+  @Input() helperText = '';
   @Input() shoeCounts: ShoeValueCount[] = [];
+  @Input() showLiveCounting = false;
+  @Input() runningCount = 0;
+  @Input() trueCount = 0;
+  @Input() cardsRemaining = 0;
+  @Input() decksRemaining = 0;
+  @Input() showUndoButton = false;
+  @Input() undoDisabled = false;
 
   @Output() cardSelected = new EventEmitter<CardValue>();
+  @Output() undoLast = new EventEmitter<void>();
   @Output() closed = new EventEmitter<void>();
 
   selectCard(item: ShoeValueCount): void {
@@ -28,5 +37,13 @@ export class CardSelectionModalComponent {
 
   close(): void {
     this.closed.emit();
+  }
+
+  undo(): void {
+    if (this.undoDisabled) {
+      return;
+    }
+
+    this.undoLast.emit();
   }
 }

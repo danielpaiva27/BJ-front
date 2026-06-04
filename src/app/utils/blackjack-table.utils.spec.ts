@@ -2,6 +2,7 @@ import { CardValue } from "../models/blackjack-table.models";
 import {
   buildPreRoundAnalysis,
   buildAnalyzeHandRequest,
+  computeLiveShoeCounting,
   createInitialShoeCounts,
   createInitialTableState,
   evaluatePlayerHand,
@@ -209,6 +210,39 @@ describe("blackjack-table.utils", () => {
     expect(preRound.betting.bet_units).toBe(1);
     expect(preRound.betting.suggested_bet).toBe(10);
     expect(preRound.generated_at).toBe("2026-06-03T00:00:00.000Z");
+  });
+
+  it("computes lightweight live Hi-Lo counting without pre-round betting analysis", () => {
+    let state = createInitialTableState(6);
+    state = registerCardAction(state, "2", "seen").state;
+    state = registerCardAction(state, "3", "seen").state;
+    state = registerCardAction(state, "10", "seen").state;
+
+    const counting = computeLiveShoeCounting(state);
+
+    expect(counting.running_count).toBe(1);
+    expect(counting.cards_remaining).toBe(309);
+    expect(counting.decks_remaining).toBeCloseTo(309 / 52, 4);
+    expect(counting.true_count).toBeCloseTo(1 / (309 / 52), 4);
+  });
+
+  it("keeps live true count safe when the shoe is empty", () => {
+    const state = createInitialTableState(1);
+    const emptyShoeState = {
+      ...state,
+      seenCards: ["2"] as CardValue[],
+      shoeCounts: state.shoeCounts.map((item) => ({
+        ...item,
+        count: 0,
+      })),
+    };
+
+    const counting = computeLiveShoeCounting(emptyShoeState);
+
+    expect(counting.cards_remaining).toBe(0);
+    expect(counting.decks_remaining).toBe(0);
+    expect(counting.true_count).toBe(0);
+    expect(Number.isFinite(counting.true_count)).toBeTrue();
   });
 
   it("builds favorable pre-round analysis after many low cards are seen", () => {

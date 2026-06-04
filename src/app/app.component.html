@@ -169,6 +169,29 @@
           <strong>{{ tableState.seenCards.join(', ') || '-' }}</strong>
         </div>
 
+        <div class="stat-grid live-counting-panel" *ngIf="liveShoeCounting as liveCount">
+          <div class="stat-item">
+            <span>Running Count</span>
+            <strong>{{ liveCount.running_count }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>True Count</span>
+            <strong>{{ liveCount.true_count | number: '1.2-4' }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>Cartas restantes</span>
+            <strong>{{ liveCount.cards_remaining }}</strong>
+          </div>
+          <div class="stat-item">
+            <span>Decks restantes</span>
+            <strong>{{ liveCount.decks_remaining | number: '1.2-4' }}</strong>
+          </div>
+        </div>
+
+        <p class="theoretical-note" *ngIf="preRoundAnalysisNeedsRefresh && currentRoundPhase === 'SEEN_CARDS_SETUP'">
+          Novas cartas foram registradas desde a Ãºltima anÃ¡lise prÃ©-rodada. Clique em Analisar prÃ©-rodada para atualizar.
+        </p>
+
         <div class="game-actions-grid">
           <button type="button" class="action-button" *ngIf="showEnterSeenCardsSetup" (click)="enterSeenCardsSetup()">Definir cartas já vistas</button>
           <button type="button" class="action-button" *ngIf="showConfirmSeenCards" (click)="confirmSeenCardsSetup()">Concluir cartas vistas</button>
@@ -567,7 +590,16 @@
 <app-card-selection-modal
   [isOpen]="cardModalOpen"
   [title]="cardModalTitle"
+  [helperText]="seenCardsModalHelperText"
   [shoeCounts]="tableState.shoeCounts"
+  [showLiveCounting]="isSeenCardsContinuousModal"
+  [runningCount]="liveShoeCounting.running_count"
+  [trueCount]="liveShoeCounting.true_count"
+  [cardsRemaining]="liveShoeCounting.cards_remaining"
+  [decksRemaining]="liveShoeCounting.decks_remaining"
+  [showUndoButton]="isSeenCardsContinuousModal"
+  [undoDisabled]="!canUndoLastSeenCardInModal"
   (cardSelected)="handleModalCardSelected($event)"
+  (undoLast)="undoLastSeenCardFromModal()"
   (closed)="closeCardSelectionModal()"
 />
