@@ -15,6 +15,88 @@
     </p>
   </header>
 
+  <section
+    class="awareness-screen"
+    *ngIf="showAwarenessScreen"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="awareness-title"
+  >
+    <div class="awareness-shell">
+      <section class="section-card awareness-hero">
+        <p class="awareness-kicker">Aviso educacional obrigatório</p>
+        <h2 id="awareness-title">Cassino não é sorte. É matemática contra você.</h2>
+        <p class="awareness-subtitle">
+          Este sistema não foi criado para incentivar apostas. Ele existe para mostrar como probabilidade, valor esperado e
+          vantagem da casa funcionam por trás do teatro dos cassinos e bets.
+        </p>
+
+        <p class="awareness-manifesto">
+          Este sistema não ensina a apostar. Ele ensina a não ser enganado pelo teatro da aposta.
+        </p>
+
+        <label class="checkbox awareness-consent">
+          <input type="checkbox" [(ngModel)]="awarenessConfirmationChecked" name="awareness_confirmation" />
+          <span>Eu entendo que esta é uma ferramenta educacional e não um incentivo a apostas reais.</span>
+        </label>
+
+        <div class="actions awareness-actions">
+          <button
+            type="button"
+            class="done-button awareness-button"
+            [disabled]="!awarenessConfirmationChecked"
+            (click)="continueFromAwareness()"
+          >
+            Entendi, continuar
+          </button>
+        </div>
+      </section>
+
+      <section class="awareness-grid" aria-label="Pontos de conscientização">
+        <article class="section-card awareness-card">
+          <h3>A casa joga com vantagem</h3>
+          <p>
+            Na maioria dos jogos de cassino, o jogador pode até ganhar no curto prazo, mas o longo prazo favorece a casa.
+            Essa vantagem estatística é o verdadeiro motor do negócio.
+          </p>
+        </article>
+
+        <article class="section-card awareness-card">
+          <h3>Slots e crash são armadilhas de repetição</h3>
+          <p>
+            Jogos como caça-níquel e crash combinam rodadas rápidas, quase-vitórias, multiplicadores chamativos e
+            recompensa variável. Eles não exigem habilidade real: exploram impulso, ansiedade e a sensação de só mais uma.
+          </p>
+        </article>
+
+        <article class="section-card awareness-card">
+          <h3>Side bets parecem diversão, mas cobram caro</h3>
+          <p>
+            Side bets oferecem pagamentos altos e raros para parecerem atraentes. Na prática, muitas têm uma vantagem da
+            casa muito maior que o jogo principal.
+          </p>
+        </article>
+
+        <article class="section-card awareness-card">
+          <h3>Blackjack live é analisável, mas não é seguro por si só</h3>
+          <p>
+            No blackjack live com shoe físico, as cartas saem do baralho e a composição muda. Isso permite análise por
+            estratégia, contagem e valor esperado. Ainda assim, sem disciplina e regras favoráveis, o jogador continua
+            exposto.
+          </p>
+        </article>
+
+        <article class="section-card awareness-card">
+          <h3>Este projeto é educacional</h3>
+          <p>
+            O objetivo deste sistema é desconstruir a ideia de sorte e mostrar decisões por probabilidade. Ele não promete
+            ganhos e não recomenda apostas reais.
+          </p>
+        </article>
+      </section>
+    </div>
+  </section>
+
   <section class="section-card setup-card" *ngIf="isSetupPhase; else shoePhase">
     <div class="section-heading">
       <h2>Configuração da mesa</h2>

@@ -168,6 +168,8 @@ export class AppComponent {
   recentRegisteredCardValue: CardValue | null = null;
   cardModalOpen = false;
   cardModalTitle = '';
+  showAwarenessScreen = true;
+  awarenessConfirmationChecked = false;
   naturalBlackjackResult: NaturalBlackjackResult | null = null;
   roundResolution: RoundResolution | null = null;
   preRoundAnalysis: PreRoundAnalysisSnapshot | null = null;
@@ -777,6 +779,14 @@ export class AppComponent {
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
     this.closeCardSelectionModal();
+  }
+
+  continueFromAwareness(): void {
+    if (!this.awarenessConfirmationChecked) {
+      return;
+    }
+
+    this.showAwarenessScreen = false;
   }
 
   selectTarget(target: CardTarget): void {

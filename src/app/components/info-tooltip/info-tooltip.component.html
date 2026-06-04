@@ -2,6 +2,7 @@
   <button
     type="button"
     class="info-button"
+    [attr.title]="entry.term"
     [attr.aria-label]="'Explicar termo: ' + entry.term"
     [attr.aria-describedby]="isOpen ? tooltipId : null"
     [attr.aria-expanded]="isOpen"

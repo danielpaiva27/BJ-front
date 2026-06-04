@@ -73,6 +73,40 @@ describe('AppComponent', () => {
     expect(app.config.risk_profile).toBe('moderate');
   });
 
+  it('should render educational awareness screen on first load', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const awarenessScreen = compiled.querySelector('.awareness-screen');
+
+    expect(awarenessScreen).not.toBeNull();
+    expect(awarenessScreen?.textContent).toContain('Cassino não é sorte. É matemática contra você.');
+    expect(awarenessScreen?.textContent).toContain('Entendi, continuar');
+  });
+
+  it('should hide awareness screen after user confirmation and keep setup flow visible', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const consentInput = compiled.querySelector('input[name="awareness_confirmation"]') as HTMLInputElement;
+    const continueButton = compiled.querySelector('.awareness-button') as HTMLButtonElement;
+
+    expect(continueButton.disabled).toBeTrue();
+
+    consentInput.click();
+    fixture.detectChanges();
+    expect(continueButton.disabled).toBeFalse();
+
+    continueButton.click();
+    fixture.detectChanges();
+
+    expect(fixture.componentInstance.showAwarenessScreen).toBeFalse();
+    expect(compiled.querySelector('.awareness-screen')).toBeNull();
+    expect(compiled.textContent).toContain('Iniciar shoe');
+  });
+
   it('should render setup section before starting shoe', () => {
     const fixture = TestBed.createComponent(AppComponent);
     fixture.detectChanges();
