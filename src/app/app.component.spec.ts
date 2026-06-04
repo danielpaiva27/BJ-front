@@ -672,28 +672,108 @@ describe('AppComponent', () => {
     expect(app.visiblePlayerActions).not.toContain('split');
   });
 
-  it('should show informational Split message without changing cards, shoe or round phase', () => {
+  it('should split 8,8 into two hands and keep first hand 8,10 as non-bust', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    setPlayerDecisionState(app, ['8', '8'], '10');
+    const tenCountBefore = app.tableState.shoeCounts.find((item) => item.value === '10')?.count ?? 0;
+
+    app.onSplit();
+
+    expect(app.splitHands.length).toBe(2);
+    expect(app.activeSplitHandIndex).toBe(0);
+    expect(app.splitHands[0].cards).toEqual(['8']);
+    expect(app.splitHands[1].cards).toEqual(['8']);
+    expect(app.tableState.roundPhase).toBe('PLAYER_HIT_PENDING');
+
+    app.handleModalCardSelected('10');
+
+    expect(app.splitHands[0].cards).toEqual(['8', '10']);
+    expect(app.splitHands[1].cards).toEqual(['8']);
+    expect(app.activeSplitHandIndex).toBe(0);
+    expect(app.playerHandEvaluation.total).toBe(18);
+    expect(app.playerBustDetected).toBeFalse();
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+    expect(app.tableState.playerCards).toEqual(['8', '10']);
+    expect(app.tableState.playerCards).not.toEqual(['8', '8', '10']);
+    expect(app.tableState.shoeCounts.find((item) => item.value === '10')?.count).toBe(tenCountBefore - 1);
+  });
+
+  it('should allow bust in first split hand without ending second split hand', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    setPlayerDecisionState(app, ['8', '8'], '10');
+
+    app.onSplit();
+    app.handleModalCardSelected('10');
+    app.onHit();
+    app.handleModalCardSelected('9');
+
+    expect(app.splitHands[0].cards).toEqual(['8', '10', '9']);
+    expect(app.splitHands[0].status).toBe('bust');
+    expect(app.activeSplitHandIndex).toBe(1);
+    expect(app.splitHands[1].cards).toEqual(['8']);
+    expect(app.tableState.playerCards).toEqual(['8']);
+    expect(app.tableState.roundPhase).toBe('PLAYER_HIT_PENDING');
+    expect(app.tableState.roundPhase).not.toBe('ROUND_RESULT');
+  });
+
+  it('should advance from split hand 1 stand to split hand 2', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
 
     app.startShoe();
     setPlayerDecisionState(app, ['8', '8'], '6');
 
-    const phaseBefore = app.tableState.roundPhase;
-    const playerCardsBefore = [...app.tableState.playerCards];
-    const dealerUpcardBefore = app.tableState.dealerUpcard;
-    const shoeCountsBefore = app.tableState.shoeCounts.map((item) => ({ ...item }));
+    app.onSplit();
+    app.handleModalCardSelected('10');
+    app.onStand();
+
+    expect(app.splitHands[0].status).toBe('stood');
+    expect(app.activeSplitHandIndex).toBe(1);
+    expect(app.tableState.roundPhase).toBe('PLAYER_HIT_PENDING');
+    expect(app.tableState.playerCards).toEqual(['8']);
+
+    app.handleModalCardSelected('3');
+
+    expect(app.splitHands[1].cards).toEqual(['8', '3']);
+    expect(app.tableState.playerCards).toEqual(['8', '3']);
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+  });
+
+  it('should resolve split results per hand after dealer plays once', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    setPlayerDecisionState(app, ['8', '8'], '6');
 
     app.onSplit();
+    app.handleModalCardSelected('10');
+    app.onStand();
 
-    expect(app.actionGuidance).toContain('O suporte visual completo para Split sera implementado em uma etapa futura.');
-    expect(app.actionGuidance).toContain('Split cria duas maos independentes a partir de um par');
-    expect(app.tableState.roundPhase).toBe(phaseBefore);
-    expect(app.tableState.playerCards).toEqual(playerCardsBefore);
-    expect(app.tableState.dealerUpcard).toBe(dealerUpcardBefore);
-    expect(app.tableState.shoeCounts).toEqual(shoeCountsBefore);
-    expect(app.roundResolution).toBeNull();
-    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+    app.handleModalCardSelected('3');
+    app.onHit();
+    app.handleModalCardSelected('10');
+    app.onStand();
+
+    expect(app.tableState.roundPhase).toBe('DEALER_REVEAL_PENDING');
+
+    app.handleModalCardSelected('10');
+    expect(app.tableState.roundPhase).toBe('DEALER_TURN');
+
+    app.startDealerDraw();
+    app.handleModalCardSelected('2');
+
+    expect(app.tableState.roundPhase).toBe('ROUND_RESULT');
+    expect(app.splitHandResults.length).toBe(2);
+    expect(app.splitHandResults[0].outcome).toBe('push');
+    expect(app.splitHandResults[1].outcome).toBe('player_win');
+    expect(app.roundResolution).not.toBeNull();
   });
 
   it('should hide Split when player already doubled', () => {

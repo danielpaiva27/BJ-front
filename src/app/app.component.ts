@@ -81,6 +81,34 @@ interface RoundResolution {
   message: string;
 }
 
+type SplitHandStatus = 'pending' | 'awaiting_card' | 'active' | 'stood' | 'bust' | 'doubled';
+
+interface SplitHandState {
+  cards: CardValue[];
+  status: SplitHandStatus;
+  hasDoubled: boolean;
+}
+
+interface SplitHandResult {
+  handIndex: number;
+  cards: CardValue[];
+  total: number;
+  outcome: RoundOutcome | 'bust';
+  reason: string;
+  hasDoubled: boolean;
+  isBust: boolean;
+}
+
+interface SplitHandDisplay {
+  handIndex: number;
+  cards: CardValue[];
+  total: number;
+  outcome: RoundOutcome | 'bust' | null;
+  reason: string;
+  hasDoubled: boolean;
+  isBust: boolean;
+}
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -170,6 +198,10 @@ export class AppComponent {
   cardModalTitle = '';
   showAwarenessScreen = true;
   awarenessConfirmationChecked = false;
+  splitHands: SplitHandState[] = [];
+  activeSplitHandIndex: number | null = null;
+  splitHandResults: SplitHandResult[] = [];
+  isSplitAcesRound = false;
   naturalBlackjackResult: NaturalBlackjackResult | null = null;
   roundResolution: RoundResolution | null = null;
   preRoundAnalysis: PreRoundAnalysisSnapshot | null = null;
@@ -213,11 +245,63 @@ export class AppComponent {
   }
 
   get canAnalyzeCurrentDecision(): boolean {
+    if (this.isSplitRoundActive) {
+      return false;
+    }
+
     return (
       this.canUseRoundAction('ANALYZE_DECISION') &&
       this.tableState.playerCards.length >= 2 &&
       this.tableState.dealerUpcard !== null
     );
+  }
+
+  get isSplitRoundActive(): boolean {
+    return this.splitHands.length > 0;
+  }
+
+  get activeSplitHand(): SplitHandState | null {
+    if (this.activeSplitHandIndex === null) {
+      return null;
+    }
+
+    return this.splitHands[this.activeSplitHandIndex] ?? null;
+  }
+
+  get activeSplitHandLabel(): string {
+    if (this.activeSplitHandIndex === null) {
+      return 'Mão -';
+    }
+
+    return `Mão ${this.activeSplitHandIndex + 1}`;
+  }
+
+  get splitHandsDisplay(): SplitHandDisplay[] {
+    if (this.splitHandResults.length > 0) {
+      return this.splitHandResults.map((hand) => ({
+        handIndex: hand.handIndex,
+        cards: [...hand.cards],
+        total: hand.total,
+        outcome: hand.outcome,
+        reason: hand.reason,
+        hasDoubled: hand.hasDoubled,
+        isBust: hand.isBust,
+      }));
+    }
+
+    return this.splitHands.map((hand, index) => {
+      const handEvaluation = evaluatePlayerHand(hand.cards);
+
+      return {
+        handIndex: index,
+        cards: [...hand.cards],
+        total: handEvaluation.total,
+        outcome: null,
+        reason: this.getSplitHandStatusLabel(hand, index),
+        hasDoubled: hand.hasDoubled,
+        isBust: hand.status === 'bust' || handEvaluation.isBust,
+      };
+    });
   }
 
   get visualPhaseLabel(): string {
@@ -232,6 +316,10 @@ export class AppComponent {
   }
 
   get playerHandEvaluation() {
+    if (this.isSplitRoundActive && this.activeSplitHand) {
+      return evaluatePlayerHand(this.activeSplitHand.cards);
+    }
+
     return evaluatePlayerHand(this.tableState.playerCards);
   }
 
@@ -240,7 +328,7 @@ export class AppComponent {
   }
 
   get showPlayerBustResultCard(): boolean {
-    return this.currentRoundPhase === 'ROUND_RESULT' && this.playerBustDetected;
+    return this.currentRoundPhase === 'ROUND_RESULT' && this.playerBustDetected && !this.isSplitRoundActive;
   }
 
   get playerBustResultDescription(): string {
@@ -298,6 +386,13 @@ export class AppComponent {
       return '';
     }
 
+    if (this.splitHandResults.length > 0) {
+      const winCount = this.splitHandResults.filter((item) => item.outcome === 'player_win').length;
+      const lossCount = this.splitHandResults.filter((item) => item.outcome === 'dealer_win' || item.outcome === 'bust').length;
+      const pushCount = this.splitHandResults.filter((item) => item.outcome === 'push').length;
+      return `Resultado do Split - ${winCount} vitória(s), ${lossCount} derrota(s), ${pushCount} push(es).`;
+    }
+
     if (this.roundResolution.reason === 'dealer_bust') {
       return 'Vitoria do jogador - dealer estourou.';
     }
@@ -338,6 +433,10 @@ export class AppComponent {
       return '';
     }
 
+    if (this.splitHandResults.length > 0) {
+      return 'Resultado consolidado de maos splitadas. Confira o detalhe por mao abaixo.';
+    }
+
     const dealerTotalLabel = this.roundResolution.dealerTotal === null ? '-' : String(this.roundResolution.dealerTotal);
     return `Jogador: ${this.roundResolution.playerCards.join(', ') || '-'} (${this.roundResolution.playerTotal}) · Dealer: ${this.roundResolution.dealerCards.join(', ') || '-'} (${dealerTotalLabel}).`;
   }
@@ -367,6 +466,10 @@ export class AppComponent {
   }
 
   get playerNaturalBlackjackDetected(): boolean {
+    if (this.isSplitRoundActive) {
+      return false;
+    }
+
     return this.isNaturalBlackjack(this.tableState.playerCards);
   }
 
@@ -526,10 +629,18 @@ export class AppComponent {
     }
 
     if (this.currentRoundPhase === 'PLAYER_HIT_PENDING') {
+      if (this.isSplitRoundActive) {
+        return `${this.activeSplitHandLabel} · selecione a carta comprada pelo jogador`;
+      }
+
       return 'Selecione a carta comprada pelo jogador';
     }
 
     if (this.currentRoundPhase === 'PLAYER_DOUBLE_PENDING') {
+      if (this.isSplitRoundActive) {
+        return `${this.activeSplitHandLabel} · selecione a única carta comprada no Double`;
+      }
+
       return 'Selecione a única carta comprada pelo jogador no Double';
     }
 
@@ -561,6 +672,14 @@ export class AppComponent {
       return 'Selecionar carta aberta';
     }
 
+    if (this.isSplitRoundActive && this.currentRoundPhase === 'PLAYER_HIT_PENDING') {
+      return `${this.activeSplitHandLabel}: selecionar carta`;
+    }
+
+    if (this.isSplitRoundActive && this.currentRoundPhase === 'PLAYER_DOUBLE_PENDING') {
+      return `${this.activeSplitHandLabel}: selecionar carta do Double`;
+    }
+
     return 'Selecionar carta';
   }
 
@@ -578,6 +697,10 @@ export class AppComponent {
   }
 
   get playerActionAvailability(): PlayerActionAvailability[] {
+    if (this.isSplitRoundActive) {
+      return this.getSplitPlayerActionAvailability();
+    }
+
     return getAvailablePlayerActions({
       phase: this.currentRoundPhase,
       playerCards: this.tableState.playerCards,
@@ -775,6 +898,7 @@ export class AppComponent {
     this.recentRegisteredCardValue = null;
     this.naturalBlackjackResult = null;
     this.roundResolution = null;
+    this.clearSplitRoundState();
     this.preRoundAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
@@ -890,6 +1014,12 @@ export class AppComponent {
   }
 
   undoLastCard(): void {
+    if (this.isSplitRoundActive) {
+      this.cardRegistrationError = 'Desfazer carta durante Split ainda nao e suportado nesta etapa.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
     if (!this.canUseRoundAction('UNDO_CARD')) {
       this.cardRegistrationError = 'Desfazer carta indisponivel na fase atual da rodada.';
       this.cardRegistrationFeedback = '';
@@ -905,8 +1035,10 @@ export class AppComponent {
   }
 
   resetCurrentRound(): void {
+    const stateForReset = this.getStateWithAllSplitPlayerCards();
+
     this.tableState = {
-      ...resetRound(this.tableState),
+      ...resetRound(stateForReset),
       gamePhase: 'shoe_active',
       roundPhase: 'SHOE_ACTIVE',
     };
@@ -924,6 +1056,7 @@ export class AppComponent {
     this.recentRegisteredCardValue = null;
     this.naturalBlackjackResult = null;
     this.roundResolution = null;
+    this.clearSplitRoundState();
     this.preRoundAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
@@ -960,6 +1093,7 @@ export class AppComponent {
     this.recentRegisteredCardValue = null;
     this.naturalBlackjackResult = null;
     this.roundResolution = null;
+    this.clearSplitRoundState();
     this.preRoundAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
@@ -967,8 +1101,10 @@ export class AppComponent {
   }
 
   startNextRound(): void {
+    const stateForNextRound = this.getStateWithAllSplitPlayerCards();
+
     this.tableState = {
-      ...startNewRoundKeepingShoe(this.tableState),
+      ...startNewRoundKeepingShoe(stateForNextRound),
       roundPhase: 'SHOE_ACTIVE',
     };
     this.cardRegistrationError = '';
@@ -985,6 +1121,7 @@ export class AppComponent {
     this.recentRegisteredCardValue = null;
     this.naturalBlackjackResult = null;
     this.roundResolution = null;
+    this.clearSplitRoundState();
     this.preRoundAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
@@ -999,6 +1136,13 @@ export class AppComponent {
 
     this.advanceRoundPhase('HIT');
     this.selectTarget('player');
+    if (this.isSplitRoundActive) {
+      this.markActiveSplitHandAwaitingCard();
+      this.actionGuidance = `${this.activeSplitHandLabel}: pedir carta selecionado. Registre a carta comprada para esta mao.`;
+      this.openCardSelectionModal(`${this.activeSplitHandLabel} · selecione a carta comprada`);
+      return;
+    }
+
     this.actionGuidance = 'Pedir carta selecionado. Registre a carta comprada na mao do jogador.';
     this.openCardSelectionModal('Selecione a carta comprada pelo jogador');
   }
@@ -1006,6 +1150,13 @@ export class AppComponent {
   onStand(): void {
     if (!this.canExecutePlayerAction('stand')) {
       this.showUnavailableActionGuidance('stand');
+      return;
+    }
+
+    if (this.isSplitRoundActive) {
+      this.markActiveSplitHandAs('stood');
+      this.actionGuidance = `${this.activeSplitHandLabel} finalizada em Stand.`;
+      this.advanceSplitRoundAfterCurrentHandResolution();
       return;
     }
 
@@ -1018,6 +1169,15 @@ export class AppComponent {
   onDouble(): void {
     if (!this.canExecutePlayerAction('double')) {
       this.showUnavailableActionGuidance('double');
+      return;
+    }
+
+    if (this.isSplitRoundActive) {
+      this.advanceRoundPhase('DOUBLE');
+      this.selectTarget('player');
+      this.doubleCardPending = true;
+      this.actionGuidance = `${this.activeSplitHandLabel}: Dobrar selecionado. Registre a unica carta adicional desta mao.`;
+      this.openCardSelectionModal(`${this.activeSplitHandLabel} · selecione a carta do Double`);
       return;
     }
 
@@ -1035,8 +1195,42 @@ export class AppComponent {
       return;
     }
 
-    this.actionGuidance =
-      'O suporte visual completo para Split sera implementado em uma etapa futura. Split cria duas maos independentes a partir de um par, por isso exige um fluxo visual proprio para multiplas maos.';
+    if (this.tableState.playerCards.length !== 2 || this.tableState.playerCards[0] !== this.tableState.playerCards[1]) {
+      this.actionGuidance = 'Split requer exatamente duas cartas iguais na mao atual.';
+      return;
+    }
+
+    const [firstCard, secondCard] = this.tableState.playerCards;
+
+    this.splitCount += 1;
+    this.splitHands = [
+      {
+        cards: [firstCard],
+        status: 'awaiting_card',
+        hasDoubled: false,
+      },
+      {
+        cards: [secondCard],
+        status: 'pending',
+        hasDoubled: false,
+      },
+    ];
+    this.activeSplitHandIndex = 0;
+    this.splitHandResults = [];
+    this.isSplitAcesRound = firstCard === 'A' && secondCard === 'A';
+    this.analysisResponse = null;
+    this.analysisError = '';
+    this.roundResolution = null;
+    this.tableState = {
+      ...this.tableState,
+      playerCards: [firstCard],
+      selectedTarget: 'player',
+    };
+    this.setRoundPhase('PLAYER_HIT_PENDING');
+    this.actionGuidance = this.isSplitAcesRound
+      ? 'Split de ases aplicado. Cada mao recebera uma carta e sera encerrada automaticamente nesta etapa.'
+      : 'Split aplicado. Mão 1 ativa: registre a proxima carta para esta mao.';
+    this.openCardSelectionModal('Mão 1 · selecione a próxima carta');
   }
 
   onSurrender(): void {
@@ -1079,6 +1273,11 @@ export class AppComponent {
   }
 
   analyzeCurrentDecision(): void {
+    if (this.isSplitRoundActive) {
+      this.analysisError = 'Análise de decisão para mãos splitadas será refinada em etapa futura.';
+      return;
+    }
+
     if (!this.canUseRoundAction('ANALYZE_DECISION')) {
       this.analysisError = 'Analise indisponivel na fase atual da rodada.';
       return;
@@ -1180,7 +1379,7 @@ export class AppComponent {
   }
 
   private get hasSplit(): boolean {
-    return this.splitCount > 0;
+    return this.isSplitRoundActive || this.splitCount > 0;
   }
 
   private get isRoundEnded(): boolean {
@@ -1317,6 +1516,42 @@ export class AppComponent {
 
   private applyPostRegistrationTransition(action: GuidedRoundAction): void {
     if (action === 'REGISTER_PLAYER_HIT') {
+      if (this.isSplitRoundActive) {
+        const activeHand = this.activeSplitHand;
+
+        if (!activeHand) {
+          this.cardRegistrationError = 'Nenhuma mão splitada ativa para registrar carta.';
+          this.cardRegistrationFeedback = '';
+          return;
+        }
+
+        this.updateActiveSplitHandCards(this.tableState.playerCards);
+        const handEvaluation = this.playerHandEvaluation;
+
+        if (handEvaluation.isBust) {
+          this.markActiveSplitHandAs('bust');
+          this.analysisResponse = null;
+          this.analysisError = '';
+          this.actionGuidance = `${this.activeSplitHandLabel} estourou com ${handEvaluation.total} pontos.`;
+          this.advanceSplitRoundAfterCurrentHandResolution();
+          return;
+        }
+
+        if (this.isSplitAcesRound) {
+          this.markActiveSplitHandAs('stood');
+          this.actionGuidance = `${this.activeSplitHandLabel} recebeu uma carta e foi encerrada automaticamente (Split de ases).`;
+          this.advanceSplitRoundAfterCurrentHandResolution();
+          return;
+        }
+
+        this.markActiveSplitHandAs('active');
+        this.setRoundPhase('PLAYER_DECISION');
+        this.analysisResponse = null;
+        this.analysisError = '';
+        this.actionGuidance = `${this.activeSplitHandLabel} atualizada. Escolha Hit, Stand ou Double conforme as regras.`;
+        return;
+      }
+
       const handEvaluation = this.playerHandEvaluation;
 
       if (handEvaluation.isBust) {
@@ -1361,6 +1596,30 @@ export class AppComponent {
     }
 
     if (action === 'REGISTER_PLAYER_DOUBLE') {
+      if (this.isSplitRoundActive) {
+        this.doubleCardPending = false;
+        this.updateActiveSplitHandCards(this.tableState.playerCards);
+        const handEvaluation = this.playerHandEvaluation;
+
+        if (handEvaluation.isBust) {
+          this.markActiveSplitHandAs('bust', true);
+          this.hasDoubled = true;
+          this.analysisResponse = null;
+          this.analysisError = '';
+          this.actionGuidance = `${this.activeSplitHandLabel} estourou após Double com ${handEvaluation.total} pontos.`;
+          this.advanceSplitRoundAfterCurrentHandResolution();
+          return;
+        }
+
+        this.markActiveSplitHandAs('doubled', true);
+        this.hasDoubled = true;
+        this.analysisResponse = null;
+        this.analysisError = '';
+        this.actionGuidance = `${this.activeSplitHandLabel} encerrada após Double.`;
+        this.advanceSplitRoundAfterCurrentHandResolution();
+        return;
+      }
+
       const handEvaluation = this.playerHandEvaluation;
 
       this.doubleCardPending = false;
@@ -1464,6 +1723,11 @@ export class AppComponent {
   }
 
   private finalizeRoundAgainstDealerTotals(): void {
+    if (this.isSplitRoundActive) {
+      this.finalizeSplitRoundAgainstDealerTotals();
+      return;
+    }
+
     const playerEvaluation = this.playerHandEvaluation;
     const dealerEvaluation = this.dealerHandEvaluation;
 
@@ -1537,6 +1801,390 @@ export class AppComponent {
     this.playerCardsLocked = true;
     this.doubleCardPending = false;
     this.actionGuidance = guidanceMessage;
+  }
+
+  private getSplitPlayerActionAvailability(): PlayerActionAvailability[] {
+    const unavailableForPhase: PlayerActionAvailability[] = [
+      {
+        action: 'hit',
+        isAvailable: false,
+        reason: 'Acoes do jogador so ficam disponiveis na fase de decisao.',
+      },
+      {
+        action: 'stand',
+        isAvailable: false,
+        reason: 'Acoes do jogador so ficam disponiveis na fase de decisao.',
+      },
+      {
+        action: 'double',
+        isAvailable: false,
+        reason: 'Acoes do jogador so ficam disponiveis na fase de decisao.',
+      },
+      {
+        action: 'split',
+        isAvailable: false,
+        reason: 'Resplit nao implementado nesta etapa.',
+      },
+      {
+        action: 'surrender',
+        isAvailable: false,
+        reason: 'Surrender nao fica disponivel apos Split.',
+      },
+    ];
+
+    if (this.currentRoundPhase !== 'PLAYER_DECISION') {
+      return unavailableForPhase;
+    }
+
+    const activeHand = this.activeSplitHand;
+
+    if (!activeHand) {
+      return unavailableForPhase.map((item) => ({
+        ...item,
+        reason: 'Nenhuma mao splitada ativa no momento.',
+      }));
+    }
+
+    const handEvaluation = evaluatePlayerHand(activeHand.cards);
+    if (handEvaluation.isBust || activeHand.status === 'bust') {
+      return unavailableForPhase.map((item) => ({
+        ...item,
+        reason: 'Mao ativa estourada e ja encerrada.',
+      }));
+    }
+
+    const canDoubleAfterSplit =
+      Boolean(this.activeRules.double_allowed) &&
+      Boolean(this.activeRules.double_after_split) &&
+      activeHand.cards.length === 2 &&
+      !activeHand.hasDoubled;
+
+    return [
+      {
+        action: 'hit',
+        isAvailable: true,
+      },
+      {
+        action: 'stand',
+        isAvailable: true,
+      },
+      {
+        action: 'double',
+        isAvailable: canDoubleAfterSplit,
+        reason: canDoubleAfterSplit
+          ? undefined
+          : !this.activeRules.double_allowed
+            ? 'Regra da mesa: Dobrar desativado.'
+            : !this.activeRules.double_after_split
+              ? 'Double apos Split desativado para esta mesa.'
+              : 'Double apos Split so fica disponivel com 2 cartas na mao ativa.',
+      },
+      {
+        action: 'split',
+        isAvailable: false,
+        reason: 'Resplit nao implementado nesta etapa.',
+      },
+      {
+        action: 'surrender',
+        isAvailable: false,
+        reason: 'Surrender nao fica disponivel apos Split.',
+      },
+    ];
+  }
+
+  private getSplitHandStatusLabel(hand: SplitHandState, handIndex: number): string {
+    if (hand.status === 'pending') {
+      return 'Aguardando ativacao';
+    }
+
+    if (hand.status === 'awaiting_card') {
+      return handIndex === this.activeSplitHandIndex ? 'Aguardando carta' : 'Aguardando';
+    }
+
+    if (hand.status === 'active') {
+      return 'Em decisao';
+    }
+
+    if (hand.status === 'stood') {
+      return 'Parada';
+    }
+
+    if (hand.status === 'bust') {
+      return 'Bust';
+    }
+
+    if (hand.status === 'doubled') {
+      return 'Encerrada com Double';
+    }
+
+    return 'Concluida';
+  }
+
+  getSplitHandOutcomeLabel(result: SplitHandDisplay): string {
+    if (result.outcome === null) {
+      return result.reason;
+    }
+
+    if (result.outcome === 'bust') {
+      return 'Bust';
+    }
+
+    if (result.outcome === 'player_win') {
+      return 'Vitoria';
+    }
+
+    if (result.outcome === 'dealer_win') {
+      return 'Derrota';
+    }
+
+    return 'Push';
+  }
+
+  getSplitHandOutcomeClass(result: SplitHandDisplay): string {
+    if (result.outcome === 'player_win') {
+      return 'split-outcome-win';
+    }
+
+    if (result.outcome === 'dealer_win' || result.outcome === 'bust') {
+      return 'split-outcome-loss';
+    }
+
+    if (result.outcome === 'push') {
+      return 'split-outcome-push';
+    }
+
+    return 'split-outcome-pending';
+  }
+
+  private markActiveSplitHandAwaitingCard(): void {
+    if (this.activeSplitHandIndex === null) {
+      return;
+    }
+
+    this.splitHands = this.splitHands.map((hand, index) => (
+      index === this.activeSplitHandIndex
+        ? {
+          ...hand,
+          status: 'awaiting_card',
+        }
+        : hand
+    ));
+  }
+
+  private markActiveSplitHandAs(status: SplitHandStatus, hasDoubled = false): void {
+    if (this.activeSplitHandIndex === null) {
+      return;
+    }
+
+    this.splitHands = this.splitHands.map((hand, index) => (
+      index === this.activeSplitHandIndex
+        ? {
+          ...hand,
+          status,
+          hasDoubled: hasDoubled || hand.hasDoubled,
+        }
+        : hand
+    ));
+  }
+
+  private updateActiveSplitHandCards(cards: CardValue[]): void {
+    if (this.activeSplitHandIndex === null) {
+      return;
+    }
+
+    this.splitHands = this.splitHands.map((hand, index) => (
+      index === this.activeSplitHandIndex
+        ? {
+          ...hand,
+          cards: [...cards],
+        }
+        : hand
+    ));
+  }
+
+  private advanceSplitRoundAfterCurrentHandResolution(): void {
+    if (!this.isSplitRoundActive) {
+      return;
+    }
+
+    const activeIndex = this.activeSplitHandIndex ?? 0;
+    const nextPendingIndex = this.splitHands.findIndex((hand, index) => index > activeIndex && hand.status === 'pending');
+
+    if (nextPendingIndex >= 0) {
+      this.activeSplitHandIndex = nextPendingIndex;
+      this.splitHands = this.splitHands.map((hand, index) => (
+        index === nextPendingIndex
+          ? {
+            ...hand,
+            status: 'awaiting_card',
+          }
+          : hand
+      ));
+
+      const nextCards = this.splitHands[nextPendingIndex]?.cards ?? [];
+      this.tableState = {
+        ...this.tableState,
+        playerCards: [...nextCards],
+        selectedTarget: 'player',
+      };
+      this.setRoundPhase('PLAYER_HIT_PENDING');
+      this.analysisResponse = null;
+      this.analysisError = '';
+      this.actionGuidance = `${this.actionGuidance} Agora Mão ${nextPendingIndex + 1} ativa: registre a proxima carta.`;
+      this.openCardSelectionModal(`Mão ${nextPendingIndex + 1} · selecione a próxima carta`);
+      return;
+    }
+
+    this.activeSplitHandIndex = null;
+    this.tableState = {
+      ...this.tableState,
+      selectedTarget: 'dealer_revealed',
+    };
+    this.setRoundPhase('DEALER_REVEAL_PENDING');
+    this.analysisResponse = null;
+    this.analysisError = '';
+    this.actionGuidance = `${this.actionGuidance} Todas as maos splitadas foram concluídas. Revele a carta oculta do dealer.`;
+    this.openCardSelectionModal('Selecione a carta oculta/revelada do dealer');
+  }
+
+  private finalizeSplitRoundAgainstDealerTotals(): void {
+    const dealerEvaluation = this.dealerHandEvaluation;
+    const dealerTotal = dealerEvaluation?.total ?? null;
+
+    this.splitHandResults = this.splitHands.map((hand, index) => {
+      const handEvaluation = evaluatePlayerHand(hand.cards);
+
+      if (hand.status === 'bust' || handEvaluation.isBust) {
+        return {
+          handIndex: index,
+          cards: [...hand.cards],
+          total: handEvaluation.total,
+          outcome: 'bust',
+          reason: `Mão ${index + 1} estourou acima de 21 pontos.`,
+          hasDoubled: hand.hasDoubled,
+          isBust: true,
+        } as SplitHandResult;
+      }
+
+      if (!dealerEvaluation) {
+        return {
+          handIndex: index,
+          cards: [...hand.cards],
+          total: handEvaluation.total,
+          outcome: 'push',
+          reason: `Mão ${index + 1} ficou sem total final do dealer para comparacao.`,
+          hasDoubled: hand.hasDoubled,
+          isBust: false,
+        } as SplitHandResult;
+      }
+
+      if (dealerEvaluation.isBust) {
+        return {
+          handIndex: index,
+          cards: [...hand.cards],
+          total: handEvaluation.total,
+          outcome: 'player_win',
+          reason: `Mão ${index + 1} venceu porque o dealer estourou.`,
+          hasDoubled: hand.hasDoubled,
+          isBust: false,
+        } as SplitHandResult;
+      }
+
+      if (handEvaluation.total > dealerEvaluation.total) {
+        return {
+          handIndex: index,
+          cards: [...hand.cards],
+          total: handEvaluation.total,
+          outcome: 'player_win',
+          reason: `Mão ${index + 1} venceu: ${handEvaluation.total} contra ${dealerEvaluation.total}.`,
+          hasDoubled: hand.hasDoubled,
+          isBust: false,
+        } as SplitHandResult;
+      }
+
+      if (handEvaluation.total < dealerEvaluation.total) {
+        return {
+          handIndex: index,
+          cards: [...hand.cards],
+          total: handEvaluation.total,
+          outcome: 'dealer_win',
+          reason: `Mão ${index + 1} perdeu: ${handEvaluation.total} contra ${dealerEvaluation.total}.`,
+          hasDoubled: hand.hasDoubled,
+          isBust: false,
+        } as SplitHandResult;
+      }
+
+      return {
+        handIndex: index,
+        cards: [...hand.cards],
+        total: handEvaluation.total,
+        outcome: 'push',
+        reason: `Mão ${index + 1} terminou em push com ${handEvaluation.total}.`,
+        hasDoubled: hand.hasDoubled,
+        isBust: false,
+      } as SplitHandResult;
+    });
+
+    const winCount = this.splitHandResults.filter((item) => item.outcome === 'player_win').length;
+    const lossCount = this.splitHandResults.filter((item) => item.outcome === 'dealer_win' || item.outcome === 'bust').length;
+    const pushCount = this.splitHandResults.filter((item) => item.outcome === 'push').length;
+
+    const overallOutcome: RoundOutcome =
+      winCount > 0 && lossCount === 0 && pushCount === 0
+        ? 'player_win'
+        : lossCount > 0 && winCount === 0 && pushCount === 0
+          ? 'dealer_win'
+          : 'push';
+
+    const overallReason: RoundResultReason =
+      overallOutcome === 'player_win'
+        ? dealerEvaluation?.isBust
+          ? 'dealer_bust'
+          : 'player_higher_total'
+        : overallOutcome === 'dealer_win'
+          ? 'dealer_higher_total'
+          : 'push_equal_total';
+
+    this.roundResolution = {
+      outcome: overallOutcome,
+      reason: overallReason,
+      playerTotal: this.splitHandResults[0]?.total ?? 0,
+      dealerTotal,
+      playerCards: this.splitHands.flatMap((hand) => hand.cards),
+      dealerCards: [...this.dealerCards],
+      hasDoubled: this.hasDoubled || this.splitHandResults.some((item) => item.hasDoubled),
+      hasSurrendered: false,
+      hasNaturalBlackjack: false,
+      isPlayerBust: this.splitHandResults.every((item) => item.isBust),
+      isDealerBust: dealerEvaluation?.isBust ?? false,
+      isPush: overallOutcome === 'push',
+      message: `Split encerrado com ${winCount} vitória(s), ${lossCount} derrota(s) e ${pushCount} push(es).`,
+    };
+
+    this.setRoundPhase('ROUND_RESULT');
+    this.visualRoundPhase = 'round_finished';
+    this.playerCardsLocked = true;
+    this.doubleCardPending = false;
+    this.actionGuidance = 'Dealer finalizado. Resultado por mão splitada calculado.';
+  }
+
+  private getStateWithAllSplitPlayerCards(): BlackjackTableState {
+    if (!this.isSplitRoundActive) {
+      return this.tableState;
+    }
+
+    const allSplitCards = this.splitHands.flatMap((hand) => hand.cards);
+    return {
+      ...this.tableState,
+      playerCards: allSplitCards.length > 0 ? [...allSplitCards] : [...this.tableState.playerCards],
+    };
+  }
+
+  private clearSplitRoundState(): void {
+    this.splitHands = [];
+    this.activeSplitHandIndex = null;
+    this.splitHandResults = [];
+    this.isSplitAcesRound = false;
   }
 
   private resolveAnalysisErrorMessage(error: unknown): string {

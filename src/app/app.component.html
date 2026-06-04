@@ -465,6 +465,19 @@
           <strong>{{ roundResolutionTitle }}</strong>
           <small class="theoretical-note">{{ roundResolutionDescription }}</small>
           <small class="theoretical-note">{{ roundResolutionReasonDescription }}</small>
+
+          <div class="split-results" *ngIf="splitHandsDisplay.length > 0">
+            <div class="split-result-row" *ngFor="let hand of splitHandsDisplay" [class]="getSplitHandOutcomeClass(hand)">
+              <span>
+                Mão {{ hand.handIndex + 1 }}
+                <strong>{{ hand.cards.join(', ') || '-' }}</strong>
+                · {{ hand.total }} pontos
+              </span>
+              <small>{{ getSplitHandOutcomeLabel(hand) }}</small>
+              <small *ngIf="hand.reason">{{ hand.reason }}</small>
+            </div>
+          </div>
+
           <div class="game-actions-grid">
             <button type="button" class="action-button" (click)="startNextRound()">Nova rodada mantendo shoe atual</button>
             <button type="button" class="action-button" (click)="resetCurrentShoe()">Novo shoe / embaralhar</button>
@@ -473,7 +486,12 @@
 
         <div class="table-state-grid hand-state-grid">
           <div class="hand-panel player-hand">
-            <span>Jogador</span>
+            <span>
+              Jogador
+              <ng-container *ngIf="isSplitRoundActive">
+                · {{ activeSplitHandLabel }}
+              </ng-container>
+            </span>
             <div class="hand-cards" [class.empty]="tableState.playerCards.length === 0">
               <ng-container *ngIf="tableState.playerCards.length > 0; else noPlayerCards">
                 <span class="playing-card-chip large" *ngFor="let card of tableState.playerCards">{{ card }}</span>
@@ -483,6 +501,19 @@
               </ng-template>
             </div>
           </div>
+
+          <div class="hand-panel split-hands-panel" *ngIf="splitHands.length > 0">
+            <span>Mãos splitadas</span>
+            <div class="split-hands-list">
+              <div class="split-hand-item" *ngFor="let hand of splitHandsDisplay" [class.active]="activeSplitHandIndex === hand.handIndex">
+                <strong>
+                  Mão {{ hand.handIndex + 1 }} · {{ hand.cards.join(', ') || '-' }} · {{ hand.total }}
+                </strong>
+                <small>{{ getSplitHandOutcomeLabel(hand) }}</small>
+              </div>
+            </div>
+          </div>
+
           <div class="hand-panel dealer-upcard">
             <span>Carta aberta do dealer</span>
             <div class="hand-cards" [class.empty]="!tableState.dealerUpcard">
@@ -523,6 +554,10 @@
 
           <p class="theoretical-note" *ngIf="currentRoundPhase === 'DEALER_REVEAL_PENDING'">
             A vez do jogador terminou. Agora revele a carta oculta do dealer.
+          </p>
+
+          <p class="theoretical-note" *ngIf="isSplitRoundActive && activeSplitHandIndex !== null">
+            {{ activeSplitHandLabel }} ativa. Cada ação afeta apenas esta mão.
           </p>
 
           <p class="theoretical-note player-actions-context" *ngIf="currentRoundPhase === 'PLAYER_DECISION'">
