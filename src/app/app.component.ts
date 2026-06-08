@@ -1,23 +1,28 @@
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component } from '@angular/core';
+import { Component, HostListener } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { finalize } from 'rxjs/operators';
 
-import { ActionAnalysis, AnalyzeHandResponse, GameRulesRequest, RiskProfile } from './models/blackjack-analysis.models';
+import { ActionAnalysis, AnalyzeHandResponse, GameRulesRequest } from './models/blackjack-analysis.models';
 import {
   BlackjackTableState,
   CardTarget,
   CardValue,
   GuidedRoundAction,
   GuidedRoundPhase,
-  PreRoundAnalysisSnapshot,
 } from './models/blackjack-table.models';
+import {
+  PreRoundAnalysisRequest,
+  PreRoundAnalysisResponse,
+  PreRoundRecommendationStatus,
+  PreRoundSystemResult,
+  RoundPreBetAnalysisSnapshot,
+} from './models/pre-round-analysis.models';
 import { BlackjackAnalysisService } from './services/blackjack-analysis.service';
 import { CardSelectionModalComponent } from './components/card-selection-modal/card-selection-modal.component';
 import { InfoTooltipComponent } from './components/info-tooltip/info-tooltip.component';
 import {
-  buildPreRoundAnalysis,
   buildAnalyzeHandRequest,
   computeLiveShoeCounting,
   createInitialTableState,
@@ -49,7 +54,6 @@ interface TableSetupConfig {
   seed: number;
   bankroll: number;
   minimum_bet: number;
-  risk_profile: RiskProfile;
 }
 
 type VisualRoundPhase = 'shoe_active' | 'dealer_reveal' | 'round_finished';
@@ -154,12 +158,6 @@ export class AppComponent {
     ROUND_ENDED: 'Rodada encerrada',
   };
 
-  readonly riskProfileLabels: Record<RiskProfile, string> = {
-    conservative: 'Conservador',
-    moderate: 'Moderado',
-    aggressive: 'Agressivo',
-  };
-
   readonly defaultConfig: TableSetupConfig = {
     number_of_decks: 6,
     dealer_hits_soft_17: false,
@@ -173,7 +171,6 @@ export class AppComponent {
     seed: 42,
     bankroll: 1000,
     minimum_bet: 10,
-    risk_profile: 'moderate',
   };
 
   config: TableSetupConfig = { ...this.defaultConfig };
@@ -184,6 +181,8 @@ export class AppComponent {
   analysisLoading = false;
   analysisResponse: AnalyzeHandResponse | null = null;
   latestBettingData: AnalyzeHandResponse['betting'] | null = null;
+  isPreRoundAnalysisLoading = false;
+  preRoundAnalysisError: string | null = null;
   actionGuidance = '';
   cardRegistrationFeedback = '';
   visualRoundPhase: VisualRoundPhase = 'shoe_active';
@@ -204,11 +203,23 @@ export class AppComponent {
   isSplitAcesRound = false;
   naturalBlackjackResult: NaturalBlackjackResult | null = null;
   roundResolution: RoundResolution | null = null;
-  preRoundAnalysis: PreRoundAnalysisSnapshot | null = null;
-  currentRoundPreBetAnalysis: PreRoundAnalysisSnapshot | null = null;
+  preRoundAnalysis: PreRoundAnalysisResponse | null = null;
+  currentRoundPreBetAnalysis: RoundPreBetAnalysisSnapshot | null = null;
   private preRoundAnalysisSignature = '';
 
   readonly cardTargets: CardTarget[] = ['player', 'dealer_upcard', 'seen', 'dealer_revealed'];
+  private readonly seenCardsKeyboardShortcutMap: Record<string, CardValue> = {
+    '1': 'A',
+    '2': '2',
+    '3': '3',
+    '4': '4',
+    '5': '5',
+    '6': '6',
+    '7': '7',
+    '8': '8',
+    '9': '9',
+    '0': '10',
+  };
 
   constructor(private readonly blackjackAnalysisService: BlackjackAnalysisService) {}
 
@@ -238,10 +249,6 @@ export class AppComponent {
 
   get bettingData() {
     return this.analysisResponse?.betting ?? null;
-  }
-
-  get nextRoundBettingData() {
-    return this.preRoundAnalysis?.betting ?? this.bettingData ?? this.latestBettingData;
   }
 
   get canAnalyzeCurrentDecision(): boolean {
@@ -457,9 +464,13 @@ export class AppComponent {
     }
 
     if (this.currentRoundPreBetAnalysis) {
-      notes.push(
-        `Exposicao teorica definida antes da mao: ${this.currentRoundPreBetAnalysis.betting.bet_units.toFixed(2)} unidades (equivalente simulado: ${this.currentRoundPreBetAnalysis.betting.suggested_bet.toFixed(2)}).`,
-      );
+      const systemSummaries = this.currentRoundPreBetAnalysis.systems
+        .map((system) => `${system.label}: ${this.getPreRoundSuggestionLabel(system)}`)
+        .join(' | ');
+      const staleNote = this.currentRoundPreBetAnalysis.snapshot_stale
+        ? ' Snapshot registrado como desatualizado.'
+        : '';
+      notes.push(`Analise pre-rodada registrada: ${systemSummaries}.${staleNote}`);
     }
 
     return notes.join(' ');
@@ -588,7 +599,7 @@ export class AppComponent {
   }
 
   get canAnalyzePreRound(): boolean {
-    return this.showStartHandCard;
+    return this.showStartHandCard && !this.isPreRoundAnalysisLoading;
   }
 
   get preRoundAnalysisNeedsRefresh(): boolean {
@@ -771,13 +782,39 @@ export class AppComponent {
 
   get seenCardsModalHelperText(): string {
     return this.isSeenCardsContinuousModal
-      ? 'Selecione quantas cartas quiser. Clique em Concluir quando terminar.'
+      ? 'Selecione quantas cartas quiser. Clique em Concluir quando terminar. Atalhos: 1=A, 2-9=valores, 0=10. Backspace/Delete desfazem a ultima carta; Enter/Escape concluem.'
       : '';
   }
 
   get canUndoLastSeenCardInModal(): boolean {
     const lastEntry = this.tableState.history[this.tableState.history.length - 1];
     return this.isSeenCardsContinuousModal && lastEntry?.target === 'seen';
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleSeenCardsKeyboardShortcut(event: KeyboardEvent): void {
+    if (!this.shouldHandleSeenCardsKeyboardShortcut(event)) {
+      return;
+    }
+
+    const mappedCard = this.seenCardsKeyboardShortcutMap[event.key];
+
+    if (mappedCard) {
+      event.preventDefault();
+      this.handleModalCardSelected(mappedCard);
+      return;
+    }
+
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      event.preventDefault();
+      this.undoLastSeenCardFromModal();
+      return;
+    }
+
+    if (event.key === 'Enter' || event.key === 'Escape') {
+      event.preventDefault();
+      this.closeCardSelectionModal();
+    }
   }
 
   enterSeenCardsSetup(): void {
@@ -816,7 +853,7 @@ export class AppComponent {
     }
 
     this.currentRoundPreBetAnalysis = this.preRoundAnalysis
-      ? this.clonePreRoundAnalysis(this.preRoundAnalysis)
+      ? this.clonePreRoundAnalysis(this.preRoundAnalysis, isPreRoundAnalysisStale)
       : null;
 
     if (!this.advanceRoundPhase('CONFIRM_BET')) {
@@ -834,15 +871,33 @@ export class AppComponent {
   }
 
   analyzePreRound(): void {
-    const preRoundAnalysis = this.executePreRoundAnalysis(false);
-
-    if (!preRoundAnalysis) {
+    if (!this.showStartHandCard) {
       this.actionGuidance = 'Analise pre-rodada disponivel somente antes do inicio da mao.';
       return;
     }
 
-    this.actionGuidance =
-      'Analise pre-rodada atualizada. Revise status do shoe e exposicao teorica antes de aceitar a aposta simulacional.';
+    const payload = this.buildPreRoundAnalysisRequest();
+    this.isPreRoundAnalysisLoading = true;
+    this.preRoundAnalysisError = null;
+
+    this.blackjackAnalysisService
+      .analyzePreRound(payload)
+      .pipe(finalize(() => {
+        this.isPreRoundAnalysisLoading = false;
+      }))
+      .subscribe({
+        next: (response) => {
+          this.preRoundAnalysis = response;
+          this.preRoundAnalysisSignature = this.buildPreRoundAnalysisSignature();
+          this.preRoundAnalysisError = null;
+          this.actionGuidance =
+            'Analise pre-rodada atualizada pelo backend. Revise os tres sistemas antes de aceitar a exposicao simulada.';
+        },
+        error: (error: unknown) => {
+          this.preRoundAnalysisError = this.resolvePreRoundAnalysisErrorMessage(error);
+          console.error('Erro ao processar analise pre-rodada da API:', error);
+        },
+      });
   }
 
   startDealerDraw(): void {
@@ -887,6 +942,8 @@ export class AppComponent {
     this.analysisError = '';
     this.analysisResponse = null;
     this.latestBettingData = null;
+    this.isPreRoundAnalysisLoading = false;
+    this.preRoundAnalysisError = null;
     this.actionGuidance = 'Shoe iniciado. Defina cartas ja vistas se necessario, ou va direto para o inicio da rodada.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1046,6 +1103,8 @@ export class AppComponent {
     this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
+    this.isPreRoundAnalysisLoading = false;
+    this.preRoundAnalysisError = null;
     this.actionGuidance = 'Rodada reiniciada. Registre novamente as cartas da rodada atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1082,6 +1141,8 @@ export class AppComponent {
     this.analysisError = '';
     this.analysisResponse = null;
     this.latestBettingData = null;
+    this.isPreRoundAnalysisLoading = false;
+    this.preRoundAnalysisError = null;
     this.actionGuidance = 'Shoe reiniciado com as contagens iniciais.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1111,6 +1172,8 @@ export class AppComponent {
     this.cardRegistrationFeedback = '';
     this.analysisError = '';
     this.analysisResponse = null;
+    this.isPreRoundAnalysisLoading = false;
+    this.preRoundAnalysisError = null;
     this.actionGuidance = 'Nova rodada iniciada mantendo o shoe atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1299,7 +1362,8 @@ export class AppComponent {
       seed: this.config.seed,
       bankroll: this.config.bankroll,
       minimum_bet: this.config.minimum_bet,
-      risk_profile: this.config.risk_profile,
+      // Compatibilidade temporaria com o contrato legado de /analyze-hand.
+      risk_profile: 'moderate',
     });
 
     if (!payload) {
@@ -1376,6 +1440,34 @@ export class AppComponent {
 
   private get hasHit(): boolean {
     return this.tableState.playerCards.length > 2 && !this.hasDoubled;
+  }
+
+  private shouldHandleSeenCardsKeyboardShortcut(event: KeyboardEvent): boolean {
+    if (!this.cardModalOpen || !this.isSeenCardsContinuousModal) {
+      return false;
+    }
+
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+      return false;
+    }
+
+    if (this.isTypingTarget(event.target)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  private isTypingTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    if (target instanceof HTMLElement && target.isContentEditable) {
+      return true;
+    }
+
+    return Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]'));
   }
 
   private get hasSplit(): boolean {
@@ -2203,25 +2295,6 @@ export class AppComponent {
     return 'Ocorreu um erro ao processar a análise.';
   }
 
-  private executePreRoundAnalysis(isAutomatic: boolean): PreRoundAnalysisSnapshot | null {
-    if (!this.showStartHandCard) {
-      return null;
-    }
-
-    const preRoundAnalysis = buildPreRoundAnalysis(this.tableState, {
-      number_of_decks: this.activeRules.number_of_decks ?? this.config.number_of_decks,
-      bankroll: this.config.bankroll,
-      minimum_bet: this.config.minimum_bet,
-      risk_profile: this.config.risk_profile,
-      is_auto_generated: isAutomatic,
-    });
-
-    this.preRoundAnalysis = preRoundAnalysis;
-    this.preRoundAnalysisSignature = this.buildPreRoundAnalysisSignature();
-    this.latestBettingData = preRoundAnalysis.betting;
-    return preRoundAnalysis;
-  }
-
   private buildPreRoundAnalysisSignature(): string {
     const shoeCountsSignature = this.tableState.shoeCounts
       .map((item) => `${item.value}:${item.count}`)
@@ -2233,19 +2306,50 @@ export class AppComponent {
       this.config.number_of_decks,
       this.config.bankroll,
       this.config.minimum_bet,
-      this.config.risk_profile,
+      this.activeRules.blackjack_payout,
+      this.activeRules.dealer_hits_soft_17,
+      this.activeRules.double_allowed,
+      this.activeRules.double_after_split,
+      this.activeRules.surrender_allowed,
+      this.activeRules.max_splits,
+      this.activeRules.dealer_peek,
     ].join('#');
   }
 
-  private clonePreRoundAnalysis(analysis: PreRoundAnalysisSnapshot): PreRoundAnalysisSnapshot {
+  private buildPreRoundAnalysisRequest(): PreRoundAnalysisRequest {
+    return {
+      number_of_decks: this.activeRules.number_of_decks ?? this.config.number_of_decks,
+      seen_cards: [...this.tableState.seenCards],
+      bankroll: this.config.bankroll,
+      minimum_bet: this.config.minimum_bet,
+      rules: {
+        blackjack_payout: this.activeRules.blackjack_payout,
+        dealer_hits_soft_17: this.activeRules.dealer_hits_soft_17,
+        double_allowed: this.activeRules.double_allowed,
+        double_after_split: this.activeRules.double_after_split,
+        surrender_allowed: this.activeRules.surrender_allowed,
+        max_splits: this.activeRules.max_splits,
+        dealer_peek: this.activeRules.dealer_peek,
+      },
+    };
+  }
+
+  private clonePreRoundAnalysis(
+    analysis: PreRoundAnalysisResponse,
+    snapshotStale: boolean,
+  ): RoundPreBetAnalysisSnapshot {
     return {
       ...analysis,
-      counting: {
-        ...analysis.counting,
-      },
-      betting: {
-        ...analysis.betting,
-      },
+      policy: { ...analysis.policy },
+      systems: analysis.systems.map((system) => ({
+        ...system,
+        warnings: system.warnings ? [...system.warnings] : undefined,
+        ace_side_count: system.ace_side_count
+          ? { ...system.ace_side_count }
+          : undefined,
+      })),
+      snapshot_stale: snapshotStale,
+      captured_at: new Date().toISOString(),
     };
   }
 
@@ -2269,8 +2373,86 @@ export class AppComponent {
     return this.gamePhaseLabels[phase];
   }
 
-  getRiskProfileLabel(profile: RiskProfile | undefined): string {
-    return profile ? this.riskProfileLabels[profile] : '-';
+  getPreRoundStatusLabel(status: PreRoundRecommendationStatus): string {
+    const labels: Record<PreRoundRecommendationStatus, string> = {
+      observe: 'Observar',
+      marginal_observe: 'Marginal: observar',
+      positive_edge_minimum_bet_exceeds_risk_cap: 'Vantagem positiva, minimo excede risco',
+      minimum_unit: 'Unidade minima',
+      favorable_risk_capped: 'Favoravel, risco limitado',
+      favorable_controlled: 'Favoravel controlado',
+      favorable_bankroll_limited: 'Favoravel, banca limita',
+      invalid_bankroll: 'Banca invalida',
+      invalid_minimum_bet: 'Unidade invalida',
+      insufficient_bankroll: 'Banca insuficiente',
+    };
+    return labels[status];
+  }
+
+  getPreRoundStatusClass(status: PreRoundRecommendationStatus): string {
+    return `pre-round-status-${status.replaceAll('_', '-')}`;
+  }
+
+  getPreRoundSuggestionLabel(system: PreRoundSystemResult): string {
+    if (!system.should_enter || system.suggested_units < 1) {
+      return 'Observar';
+    }
+
+    const unitLabel = system.suggested_units === 1 ? 'unidade' : 'unidades';
+    return `${system.suggested_units} ${unitLabel}`;
+  }
+
+  getPreRoundRiskLabel(system: PreRoundSystemResult): string {
+    if (!system.should_enter || system.suggested_amount <= 0) {
+      return 'Sem exposicao sugerida';
+    }
+
+    return (
+      `${this.formatRate(system.estimated_risk_of_ruin)} / ` +
+      `limite ${this.formatRate(system.risk_of_ruin_limit)}`
+    );
+  }
+
+  shouldShowMinimumBetRiskCapDiagnostic(system: PreRoundSystemResult): boolean {
+    return (
+      system.minimum_bet_exceeds_risk_cap === true
+      && system.estimated_player_edge > 0
+      && system.suggested_units === 0
+      && system.suggested_amount === 0
+    );
+  }
+
+  getPreRoundObservationReason(system: PreRoundSystemResult): string | null {
+    if (!this.shouldShowMinimumBetRiskCapDiagnostic(system)) {
+      return null;
+    }
+
+    return 'Unidade minima excede o limite de risco para a banca atual.';
+  }
+
+  getPreRoundSystemDescription(systemId: PreRoundSystemResult['system_id']): string {
+    if (systemId === 'hi_opt_ii') {
+      return 'Sistema ace-neutral. A exposicao usa o betting count ajustado pelos ases restantes.';
+    }
+
+    if (systemId === 'wong_halves') {
+      return 'Sistema fracionario com pesos mais granulares e acumulador inteiro escalado.';
+    }
+
+    return 'Sistema classico de contagem balanceada usado como leitura baseline.';
+  }
+
+  formatSignedPercent(value: number): string {
+    const sign = value > 0 ? '+' : '';
+    return `${sign}${(value * 100).toFixed(2)}%`;
+  }
+
+  private resolvePreRoundAnalysisErrorMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse && error.status === 0) {
+      return 'Nao foi possivel conectar ao backend da analise pre-rodada. Verifique se a API esta rodando.';
+    }
+
+    return 'Nao foi possivel executar a analise pre-rodada. Verifique cartas vistas, banca, unidade minima e regras da mesa.';
   }
 
   getCardPrimaryDisplay(value: CardValue): string {
@@ -2285,7 +2467,7 @@ export class AppComponent {
     return this.analysisResponse?.actions?.find((action) => action.action === actionName) ?? null;
   }
 
-  formatRate(rate: number | undefined): string {
+  formatRate(rate: number | null | undefined): string {
     if (rate === undefined || rate === null) {
       return '-';
     }

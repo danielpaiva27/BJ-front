@@ -2,13 +2,10 @@ import { ActionAnalysis, AnalyzeHandRequest, GameRulesRequest } from "../models/
 import {
   BlackjackTableState,
   BuildAnalyzeRequestOptions,
-  BuildPreRoundAnalysisOptions,
   CardTarget,
   CardValue,
   GuidedRoundAction,
   GuidedRoundPhase,
-  PreRoundAnalysisSnapshot,
-  PreRoundShoeStatus,
   RegisteredCardAction,
   ShoeValueCount,
   RegisterCardResult,
@@ -84,12 +81,6 @@ const HILO_CARD_VALUES: Record<CardValue, number> = {
   "10": -1,
   A: -1,
 };
-
-const RISK_CAP_BY_PROFILE = {
-  conservative: 0.02,
-  moderate: 0.05,
-  aggressive: 0.08,
-} as const;
 
 const DEFAULT_PLAYER_ACTION_FLAGS: PlayerActionStateFlags = {
   hasHit: false,
@@ -679,168 +670,6 @@ export function computeLiveShoeCounting(state: BlackjackTableState): LiveShoeCou
     true_count: trueCount,
     cards_remaining: cardsRemaining,
     decks_remaining: Number(decksRemaining.toFixed(4)),
-  };
-}
-
-function resolveShoeStatus(trueCount: number): { shoeStatus: PreRoundShoeStatus; deckStatus: string } {
-  if (trueCount <= -2) {
-    return {
-      shoeStatus: "muito_desfavoravel",
-      deckStatus: "Muito desfavoravel",
-    };
-  }
-
-  if (trueCount < 0) {
-    return {
-      shoeStatus: "desfavoravel",
-      deckStatus: "Desfavoravel",
-    };
-  }
-
-  if (trueCount < 1) {
-    return {
-      shoeStatus: "neutro",
-      deckStatus: "Neutro / favoravel baixo",
-    };
-  }
-
-  if (trueCount < 2) {
-    return {
-      shoeStatus: "neutro_favoravel_leve",
-      deckStatus: "Neutro para favoravel leve",
-    };
-  }
-
-  if (trueCount < 4) {
-    return {
-      shoeStatus: "favoravel",
-      deckStatus: "Favoravel",
-    };
-  }
-
-  return {
-    shoeStatus: "muito_favoravel",
-    deckStatus: "Muito favoravel",
-  };
-}
-
-function resolveTheoreticalUnits(trueCount: number, riskProfile: BuildPreRoundAnalysisOptions["risk_profile"]): number {
-  if (riskProfile === "conservative") {
-    if (trueCount >= 4) {
-      return 3;
-    }
-
-    if (trueCount >= 2) {
-      return 2;
-    }
-
-    return 1;
-  }
-
-  if (riskProfile === "aggressive") {
-    if (trueCount >= 5) {
-      return 8;
-    }
-
-    if (trueCount >= 3) {
-      return 6;
-    }
-
-    if (trueCount >= 2) {
-      return 3;
-    }
-
-    return 1;
-  }
-
-  if (trueCount >= 5) {
-    return 6;
-  }
-
-  if (trueCount >= 3) {
-    return 4;
-  }
-
-  if (trueCount >= 2) {
-    return 2;
-  }
-
-  return 1;
-}
-
-function resolvePreRoundRecommendation(trueCount: number): { entryAdvice: string; recommendation: string } {
-  if (trueCount <= 0) {
-    return {
-      entryAdvice: "Entrada conservadora: nao aumentar exposicao teorica.",
-      recommendation:
-        "Shoe nao favoravel. Se a mesa permitir, a postura mais conservadora seria observar e nao aumentar exposicao. Se for participar, usar apenas a unidade base.",
-    };
-  }
-
-  if (trueCount < 2) {
-    return {
-      entryAdvice: "Entrada possivel com unidade base.",
-      recommendation: "Shoe proximo do neutro. Exposicao teorica sugerida: unidade base.",
-    };
-  }
-
-  return {
-    entryAdvice: "Entrada favoravel: considerar exposicao teorica maior dentro do perfil de risco.",
-    recommendation:
-      "Shoe favoravel. O modelo sugere aumentar a exposicao teorica conforme o perfil de risco, sempre dentro do limite simulado da banca.",
-  };
-}
-
-export function buildPreRoundAnalysis(
-  state: BlackjackTableState,
-  options: BuildPreRoundAnalysisOptions,
-): PreRoundAnalysisSnapshot {
-  const configuredDecks = Math.max(1, Math.floor(options.number_of_decks));
-  const configuredTotalCards = configuredDecks * 52;
-  const cardsRemaining = Math.max(0, Math.min(getTotalRemainingCards(state), configuredTotalCards));
-  const runningCount = computeRunningCount(state.seenCards);
-  const decksRemaining = cardsRemaining > 0 ? cardsRemaining / 52 : 0;
-  const trueCountRaw = decksRemaining > 0 ? runningCount / decksRemaining : 0;
-  const trueCount = Number(trueCountRaw.toFixed(4));
-  const shoeStatus = resolveShoeStatus(trueCount);
-  const theoreticalUnits = resolveTheoreticalUnits(trueCount, options.risk_profile);
-  const minimumBet = Math.max(0, options.minimum_bet);
-  const bankroll = Math.max(0, options.bankroll);
-  const capPercent = RISK_CAP_BY_PROFILE[options.risk_profile];
-  const maxSafeExposure = Number((bankroll * capPercent).toFixed(2));
-  const rawSuggestedBet = Number((theoreticalUnits * minimumBet).toFixed(2));
-  const suggestedBet = Number(Math.min(rawSuggestedBet, maxSafeExposure).toFixed(2));
-  const capApplied = rawSuggestedBet > maxSafeExposure;
-  const effectiveBetUnits = minimumBet > 0 ? Number((suggestedBet / minimumBet).toFixed(2)) : 0;
-  const recommendationText = resolvePreRoundRecommendation(trueCount);
-  const capExplanation = capApplied
-    ? ` Limite de seguranca aplicado para o perfil: maximo de ${(capPercent * 100).toFixed(0)}% da banca simulada.`
-    : "";
-
-  return {
-    counting: {
-      running_count: runningCount,
-      true_count: trueCount,
-      cards_remaining: cardsRemaining,
-      decks_remaining: Number(decksRemaining.toFixed(4)),
-      deck_status: shoeStatus.deckStatus,
-      shoe_status: shoeStatus.shoeStatus,
-    },
-    betting: {
-      suggested_bet: suggestedBet,
-      bet_units: effectiveBetUnits,
-      risk_profile: options.risk_profile,
-      explanation:
-        `Exposicao simulada calculada com unidade base ${minimumBet.toFixed(2)} e ${theoreticalUnits.toFixed(2)} unidades teoricas.` +
-        capExplanation,
-      max_safe_exposure: maxSafeExposure,
-      cap_percent: capPercent,
-      cap_applied: capApplied,
-    },
-    recommendation: recommendationText.recommendation,
-    entry_advice: recommendationText.entryAdvice,
-    generated_at: options.generated_at ?? new Date().toISOString(),
-    is_auto_generated: options.is_auto_generated ?? false,
   };
 }
 

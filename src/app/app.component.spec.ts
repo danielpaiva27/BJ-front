@@ -1,14 +1,128 @@
 import { TestBed } from '@angular/core/testing';
 import { HttpErrorResponse } from '@angular/common/http';
-import { of, throwError } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 
 import { ActionAnalysis, AnalyzeHandResponse } from './models/blackjack-analysis.models';
 import { CardValue } from './models/blackjack-table.models';
+import {
+  PreRoundAnalysisRequest,
+  PreRoundAnalysisResponse,
+  PreRoundSystemResult,
+} from './models/pre-round-analysis.models';
 import { BlackjackAnalysisService } from './services/blackjack-analysis.service';
 import { AppComponent } from './app.component';
 
 describe('AppComponent', () => {
   let blackjackAnalysisServiceSpy: jasmine.SpyObj<BlackjackAnalysisService>;
+
+  function buildPreRoundSystem(
+    system_id: PreRoundSystemResult['system_id'],
+    label: string,
+    runningCount: number,
+    trueCount: number,
+  ): PreRoundSystemResult {
+    return {
+      system_id,
+      label,
+      level: system_id === 'hi_lo' ? 1 : system_id === 'hi_opt_ii' ? 2 : 3,
+      balanced: true,
+      ace_reckoned: system_id !== 'hi_opt_ii',
+      fractional: system_id === 'wong_halves',
+      requires_ace_side_count: system_id === 'hi_opt_ii',
+      running_count: runningCount,
+      true_count: trueCount,
+      betting_true_count: trueCount,
+      estimated_player_edge: (trueCount * 0.005) - 0.005,
+      should_enter: trueCount >= 2,
+      suggested_units: trueCount >= 2 ? 1 : 0,
+      suggested_amount: trueCount >= 2 ? 10 : 0,
+      bankroll_exposure_percent: trueCount >= 2 ? 0.01 : 0,
+      estimated_risk_of_ruin: trueCount >= 2 ? 0.03 : 0,
+      risk_of_ruin_limit: 0.05,
+      risk_model: 'approx_exponential_gambler_ruin',
+      variance_per_unit: 1.3,
+      max_bet_by_risk: trueCount >= 2 ? 15 : 0,
+      max_single_round_exposure: 0.05,
+      max_bet_by_exposure: 50,
+      selected_bet_fraction: trueCount >= 2 ? 0.01 : 0,
+      kelly_fraction: Math.max(0, ((trueCount * 0.005) - 0.005) / 1.3),
+      risk_limited_fraction: trueCount >= 2 ? 0.015 : 0,
+      risk_if_minimum_bet: null,
+      minimum_bankroll_required_for_minimum_bet: null,
+      minimum_bet_exceeds_risk_cap: false,
+      recommendation_status: trueCount >= 2 ? 'minimum_unit' : 'observe',
+      recommendation_text: trueCount >= 2
+        ? 'Vantagem estimada pequena. A política sugere no máximo a unidade mínima.'
+        : 'Sem vantagem estimada suficiente. A política sugere observar e continuar registrando cartas.',
+      ...(system_id === 'hi_opt_ii'
+        ? {
+          playing_running_count: runningCount,
+          playing_true_count: trueCount,
+          betting_running_count: runningCount,
+          ace_adjustment_factor: 2,
+          ace_side_count: {
+            total_aces: 24,
+            seen_aces: 0,
+            aces_remaining: 24,
+            expected_aces_remaining: 24,
+            excess_aces: 0,
+          },
+        }
+        : {}),
+      ...(system_id === 'wong_halves'
+        ? {
+          scaled_running_count: runningCount * 2,
+          scale: 2,
+        }
+        : {}),
+    };
+  }
+
+  function buildPreRoundResponse(request: PreRoundAnalysisRequest): PreRoundAnalysisResponse {
+    const runningCount = request.seen_cards.reduce((total, card) => {
+      if (['2', '3', '4', '5', '6'].includes(card)) {
+        return total + 1;
+      }
+      if (card === '10' || card === 'A') {
+        return total - 1;
+      }
+      return total;
+    }, 0);
+    const cardsRemaining = (request.number_of_decks * 52) - request.seen_cards.length;
+    const decksRemaining = cardsRemaining > 0 ? cardsRemaining / 52 : 0;
+    const trueCount = decksRemaining > 0 ? runningCount / decksRemaining : 0;
+
+    return {
+      cards_seen: request.seen_cards.length,
+      cards_remaining: cardsRemaining,
+      decks_remaining: decksRemaining,
+      bankroll: request.bankroll,
+      minimum_bet: request.minimum_bet,
+      policy: {
+        policy_id: 'risk_capped_growth',
+        policy_label: 'Crescimento com risco de quebra limitado',
+        description: 'Política de exposição simulada limitada por risco estimado.',
+        variance_per_unit: 1.3,
+        risk_of_ruin_limit: 0.05,
+        max_single_round_exposure: 0.05,
+        max_bankroll_exposure: 0.05,
+        risk_model: 'approx_exponential_gambler_ruin',
+      },
+      systems: [
+        buildPreRoundSystem('hi_lo', 'Hi-Lo', runningCount, trueCount),
+        buildPreRoundSystem('hi_opt_ii', 'Hi-Opt II', runningCount, trueCount),
+        buildPreRoundSystem('wong_halves', 'Wong Halves', runningCount / 2, trueCount / 2),
+      ],
+      most_favorable_estimate_system_id: 'hi_lo',
+    };
+  }
+
+  function findPreRoundSystem(
+    response: PreRoundAnalysisResponse | null,
+    systemId: PreRoundSystemResult['system_id'],
+  ): PreRoundSystemResult | undefined {
+    return response?.systems.find((system) => system.system_id === systemId);
+  }
 
   function buildAction(action: ActionAnalysis['action']): ActionAnalysis {
     return {
@@ -49,9 +163,21 @@ describe('AppComponent', () => {
     };
   }
 
+  function dispatchWindowKey(key: string): void {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  }
+
+  function dispatchKeyOnElement(key: string, element: HTMLElement): void {
+    element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  }
+
   beforeEach(async () => {
-    blackjackAnalysisServiceSpy = jasmine.createSpyObj<BlackjackAnalysisService>('BlackjackAnalysisService', ['analyzeHand']);
+    blackjackAnalysisServiceSpy = jasmine.createSpyObj<BlackjackAnalysisService>(
+      'BlackjackAnalysisService',
+      ['analyzeHand', 'analyzePreRound'],
+    );
     blackjackAnalysisServiceSpy.analyzeHand.and.returnValue(of({}));
+    blackjackAnalysisServiceSpy.analyzePreRound.and.callFake((request) => of(buildPreRoundResponse(request)));
 
     await TestBed.configureTestingModule({
       imports: [AppComponent],
@@ -70,7 +196,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     expect(app.config.number_of_decks).toBe(6);
     expect(app.config.blackjack_payout).toBe('3:2');
-    expect(app.config.risk_profile).toBe('moderate');
+    expect('risk_profile' in app.config).toBeFalse();
   });
 
   it('should render educational awareness screen on first load', () => {
@@ -165,12 +291,107 @@ describe('AppComponent', () => {
 
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.textContent).toContain('Análise pré-rodada');
-    expect(compiled.textContent).toContain('Running count');
-    expect(compiled.textContent).toContain('True count');
-    expect(compiled.textContent).toContain('Status do shoe');
+    expect(compiled.textContent).toContain('Running Count');
+    expect(compiled.textContent).toContain('True Count');
+    expect(compiled.textContent).toContain('Hi-Lo');
+    expect(compiled.textContent).toContain('Hi-Opt II');
+    expect(compiled.textContent).toContain('Wong Halves');
+    expect(compiled.textContent).toContain('Ace Side Count');
+    expect(compiled.textContent).toContain('Scaled running count');
     expect(compiled.textContent).toContain('Equivalente simulado');
-    expect(compiled.textContent).toContain('10.00');
+    expect(compiled.textContent).toContain('Risco estimado de quebra');
+    expect(compiled.textContent).toContain('Sem exposicao sugerida');
     expect(compiled.textContent).toContain('Aposta aceita / Iniciar mão');
+  });
+
+  it('should render positive-edge minimum-bet risk-cap status and diagnostic block', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const response = buildPreRoundResponse({
+      number_of_decks: 6,
+      seen_cards: [],
+      bankroll: 200,
+      minimum_bet: 5,
+    });
+
+    response.systems = response.systems.map((system) => ({
+      ...system,
+      estimated_player_edge: 0.0196,
+      should_enter: false,
+      suggested_units: 0,
+      suggested_amount: 0,
+      max_bet_by_risk: 2.01314566,
+      estimated_risk_of_ruin: 0,
+      risk_if_minimum_bet: 0.2993119,
+      minimum_bankroll_required_for_minimum_bet: 496.73492,
+      minimum_bet_exceeds_risk_cap: true,
+      recommendation_status: 'positive_edge_minimum_bet_exceeds_risk_cap',
+      recommendation_text: 'Ha vantagem estimada, mas a menor aposta possivel ultrapassa o limite aproximado de risco de quebra de 5% para a banca atual.',
+    }));
+
+    blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(of(response));
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(compiled.textContent).toContain('Vantagem positiva, minimo excede risco');
+    expect(compiled.textContent).toContain('Diagnostico de unidade minima');
+    expect(compiled.textContent).toContain('Motivo:');
+    expect(compiled.textContent).toContain('Unidade minima excede o limite de risco para a banca atual.');
+    expect(compiled.textContent).toContain('Maximo permitido pelo risco');
+    expect(compiled.textContent).toContain('Unidade minima');
+    expect(compiled.textContent).toContain('Risco se apostar o minimo');
+    expect(compiled.textContent).toContain('Banca estimada necessaria para minimo com risco <= 5%');
+    expect(compiled.textContent).toContain('2.01');
+    expect(compiled.textContent).toContain('5.00');
+    expect(compiled.textContent).toContain('29.93%');
+    expect(compiled.textContent).toContain('496.73');
+    expect(compiled.querySelectorAll('.pre-round-status-positive-edge-minimum-bet-exceeds-risk-cap').length).toBe(3);
+
+    const text = compiled.textContent?.toLowerCase() ?? '';
+    expect(text).not.toContain('aposta segura');
+    expect(text).not.toContain('garantia');
+    expect(text).not.toContain('lucro garantido');
+    expect(text).toContain('hi-lo');
+    expect(text).toContain('hi-opt ii');
+    expect(text).toContain('wong halves');
+  });
+
+  it('should not render minimum-bet risk-cap diagnostic block for normal suggestions', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).not.toContain('Diagnostico de unidade minima');
+    expect(text).not.toContain('Banca estimada necessaria para minimo com risco <= 5%');
+  });
+
+  it('should render estimated ruin risk without promise language', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    for (let index = 0; index < 15; index += 1) {
+      app.registerCard('2');
+    }
+    app.confirmSeenCardsSetup();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const preRoundCard = (fixture.nativeElement as HTMLElement)
+      .querySelector('.pre-round-card');
+    const text = preRoundCard?.textContent?.toLowerCase() ?? '';
+    expect(text).toContain('risco estimado de quebra');
+    expect(text).toContain('limite 5.00%');
+    expect(text).not.toContain('aposta segura');
+    expect(text).not.toContain('lucro garantido');
   });
 
   it('should expose pre-round analyze button before starting the hand', () => {
@@ -185,6 +406,99 @@ describe('AppComponent', () => {
     expect(app.canAnalyzePreRound).toBeTrue();
   });
 
+  it('should call backend pre-round analysis with current shoe, bankroll and rules', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.config.number_of_decks = 6;
+    app.config.bankroll = 1500;
+    app.config.minimum_bet = 25;
+    app.config.blackjack_payout = '6:5';
+    app.config.dealer_hits_soft_17 = true;
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.registerCard('A');
+    app.confirmSeenCardsSetup();
+
+    app.analyzePreRound();
+
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(1);
+    const payload = blackjackAnalysisServiceSpy.analyzePreRound.calls.mostRecent().args[0];
+    expect(payload).toEqual(jasmine.objectContaining({
+      number_of_decks: 6,
+      seen_cards: ['2', 'A'],
+      bankroll: 1500,
+      minimum_bet: 25,
+      rules: jasmine.objectContaining({
+        blackjack_payout: '6:5',
+        dealer_hits_soft_17: true,
+        double_after_split: true,
+        surrender_allowed: false,
+        dealer_peek: true,
+      }),
+    }));
+    expect(payload.systems).toBeUndefined();
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+  });
+
+  it('should show loading and disable pre-round analysis while request is pending', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const pendingResponse = new Subject<PreRoundAnalysisResponse>();
+    blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(pendingResponse.asObservable());
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const analyzeButton = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('button'),
+    ).find((button) => button.textContent?.includes('Analisando')) as HTMLButtonElement;
+    expect(app.isPreRoundAnalysisLoading).toBeTrue();
+    expect(analyzeButton.disabled).toBeTrue();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Consultando os três sistemas no backend');
+
+    pendingResponse.next(buildPreRoundResponse({
+      number_of_decks: 6,
+      seen_cards: [],
+      bankroll: 1000,
+      minimum_bet: 10,
+    }));
+    pendingResponse.complete();
+
+    expect(app.isPreRoundAnalysisLoading).toBeFalse();
+  });
+
+  it('should show friendly pre-round API error and keep the shoe functional', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(
+      throwError(() => new HttpErrorResponse({ status: 0, statusText: 'Unknown Error' })),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    expect(app.preRoundAnalysisError).toContain('Nao foi possivel conectar ao backend');
+    expect(app.isPreRoundAnalysisLoading).toBeFalse();
+    expect(app.tableState.roundPhase).toBe('SHOE_ACTIVE');
+    expect(app.preRoundAnalysis).toBeNull();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Nao foi possivel conectar ao backend');
+  });
+
+  it('should not render risk profile controls or labels', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent?.toLowerCase() ?? '';
+    for (const forbidden of ['perfil de risco', 'conservador', 'moderado', 'agressivo']) {
+      expect(text).not.toContain(forbidden);
+    }
+    expect((fixture.nativeElement as HTMLElement).querySelector('[name="risk_profile"]')).toBeNull();
+  });
+
   it('should reanalyze pre-round metrics after seen cards change before hand start', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -192,8 +506,9 @@ describe('AppComponent', () => {
     app.startShoe();
     app.analyzePreRound();
 
-    const trueCountBefore = app.preRoundAnalysis?.counting.true_count ?? 0;
-    const runningCountBefore = app.preRoundAnalysis?.counting.running_count ?? 0;
+    const hiLoBefore = findPreRoundSystem(app.preRoundAnalysis, 'hi_lo');
+    const trueCountBefore = hiLoBefore?.true_count ?? 0;
+    const runningCountBefore = hiLoBefore?.running_count ?? 0;
 
     app.enterSeenCardsSetup();
     app.registerCard('2');
@@ -207,13 +522,15 @@ describe('AppComponent', () => {
     fixture.detectChanges();
 
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.textContent).toContain('Novas cartas foram registradas desde a última análise pré-rodada');
+    expect(compiled.textContent).toContain('Cartas vistas, banca ou regras mudaram desde a última análise pré-rodada');
 
     app.analyzePreRound();
 
-    expect((app.preRoundAnalysis?.counting.running_count ?? 0)).toBeGreaterThan(runningCountBefore);
-    expect((app.preRoundAnalysis?.counting.true_count ?? 0)).toBeGreaterThan(trueCountBefore);
+    const hiLoAfter = findPreRoundSystem(app.preRoundAnalysis, 'hi_lo');
+    expect((hiLoAfter?.running_count ?? 0)).toBeGreaterThan(runningCountBefore);
+    expect((hiLoAfter?.true_count ?? 0)).toBeGreaterThan(trueCountBefore);
     expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(2);
   });
 
   it('should start hand without auto-running pre-round analysis when user skips manual analysis', () => {
@@ -282,6 +599,169 @@ describe('AppComponent', () => {
 
     app.closeCardSelectionModal();
     expect(app.cardModalOpen).toBeFalse();
+  });
+
+  it('should register seen cards from keyboard shortcuts 1, 0 and 5 while keeping seen-cards modal open', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    const aceCountBefore = app.tableState.shoeCounts.find((item) => item.value === 'A')?.count ?? 0;
+    const tenCountBefore = app.tableState.shoeCounts.find((item) => item.value === '10')?.count ?? 0;
+    const fiveCountBefore = app.tableState.shoeCounts.find((item) => item.value === '5')?.count ?? 0;
+
+    dispatchWindowKey('1');
+    dispatchWindowKey('0');
+    dispatchWindowKey('5');
+
+    expect(app.tableState.seenCards).toEqual(['A', '10', '5']);
+    expect(app.tableState.shoeCounts.find((item) => item.value === 'A')?.count).toBe(aceCountBefore - 1);
+    expect(app.tableState.shoeCounts.find((item) => item.value === '10')?.count).toBe(tenCountBefore - 1);
+    expect(app.tableState.shoeCounts.find((item) => item.value === '5')?.count).toBe(fiveCountBefore - 1);
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.liveShoeCounting.running_count).toBe(-1);
+    expect(Number.isFinite(app.liveShoeCounting.true_count)).toBeTrue();
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+  });
+
+  it('should update running count and true count with keyboard shortcuts in seen-cards modal', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    dispatchWindowKey('2');
+    dispatchWindowKey('3');
+    dispatchWindowKey('0');
+
+    expect(app.tableState.seenCards).toEqual(['2', '3', '10']);
+    expect(app.liveShoeCounting.running_count).toBe(1);
+    expect(Number.isFinite(app.liveShoeCounting.true_count)).toBeTrue();
+    expect(app.liveShoeCounting.cards_remaining).toBe(309);
+  });
+
+  it('should ignore seen-cards keyboard shortcuts while typing in an input field', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    const tempInput = document.createElement('input');
+    document.body.appendChild(tempInput);
+
+    try {
+      tempInput.focus();
+      dispatchKeyOnElement('6', tempInput);
+      expect(app.tableState.seenCards).toEqual([]);
+      expect(app.liveShoeCounting.running_count).toBe(0);
+    } finally {
+      tempInput.remove();
+    }
+  });
+
+  it('should not apply seen-cards keyboard shortcuts in non seen-cards modal contexts', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.confirmBettingDecision();
+    fixture.detectChanges();
+
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.isSeenCardsContinuousModal).toBeFalse();
+
+    dispatchWindowKey('8');
+
+    expect(app.tableState.seenCards).toEqual([]);
+    expect(app.tableState.playerCards).toEqual([]);
+    expect(app.liveShoeCounting.running_count).toBe(0);
+  });
+
+  it('should ignore keyboard shortcut when target card is unavailable in the shoe', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.tableState = {
+      ...app.tableState,
+      shoeCounts: app.tableState.shoeCounts.map((item) => (
+        item.value === 'A' ? { ...item, count: 0 } : item
+      )),
+    };
+    fixture.detectChanges();
+
+    dispatchWindowKey('1');
+
+    expect(app.tableState.seenCards).toEqual([]);
+    expect(app.tableState.shoeCounts.find((item) => item.value === 'A')?.count).toBe(0);
+    expect(app.liveShoeCounting.running_count).toBe(0);
+  });
+
+  it('should keep pre-round analysis stale after seen-card keyboard registration without auto-analyzing', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    dispatchWindowKey('4');
+
+    expect(app.tableState.seenCards).toEqual(['4']);
+    expect(app.preRoundAnalysisNeedsRefresh).toBeTrue();
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(1);
+  });
+
+  it('should support Backspace/Delete undo and Enter/Escape close in seen-cards modal shortcuts', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    dispatchWindowKey('2');
+    dispatchWindowKey('3');
+    expect(app.tableState.seenCards).toEqual(['2', '3']);
+
+    dispatchWindowKey('Backspace');
+    expect(app.tableState.seenCards).toEqual(['2']);
+
+    dispatchWindowKey('Delete');
+    expect(app.tableState.seenCards).toEqual([]);
+
+    dispatchWindowKey('Enter');
+    expect(app.cardModalOpen).toBeFalse();
+
+    app.openCardSelectionModal('Registrar cartas vistas');
+    expect(app.cardModalOpen).toBeTrue();
+
+    dispatchWindowKey('Escape');
+    expect(app.cardModalOpen).toBeFalse();
+  });
+
+  it('should expose seen-cards helper text with keyboard shortcut hint', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+
+    expect(app.seenCardsModalHelperText).toContain('Atalhos: 1=A, 2-9=valores, 0=10');
+    expect(app.seenCardsModalHelperText).toContain('Backspace/Delete');
+    expect(app.seenCardsModalHelperText).toContain('Enter/Escape');
   });
 
   it('should render live seen-cards counting outside the modal', () => {
@@ -354,9 +834,10 @@ describe('AppComponent', () => {
 
     expect(app.preRoundAnalysisNeedsRefresh).toBeTrue();
     expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(1);
     fixture.detectChanges();
     expect((fixture.nativeElement as HTMLElement).textContent).toContain(
-      'Novas cartas foram registradas desde a',
+      'Cartas vistas, banca ou regras mudaram desde a',
     );
   });
 
@@ -370,8 +851,7 @@ describe('AppComponent', () => {
     app.confirmSeenCardsSetup();
     app.analyzePreRound();
 
-    const lastSnapshotTimestamp = app.preRoundAnalysis?.generated_at ?? '';
-    const lastRunningCount = app.preRoundAnalysis?.counting.running_count ?? 0;
+    const lastRunningCount = findPreRoundSystem(app.preRoundAnalysis, 'hi_lo')?.running_count ?? 0;
 
     app.enterSeenCardsSetup();
     app.registerCard('2');
@@ -383,9 +863,10 @@ describe('AppComponent', () => {
 
     expect(confirmSpy).toHaveBeenCalledWith('A análise pré-rodada está desatualizada. Deseja iniciar a mão mesmo assim?');
     expect(app.tableState.roundPhase).toBe('INITIAL_DEAL');
-    expect(app.preRoundAnalysis?.generated_at).toBe(lastSnapshotTimestamp);
-    expect(app.currentRoundPreBetAnalysis?.generated_at).toBe(lastSnapshotTimestamp);
-    expect(app.currentRoundPreBetAnalysis?.counting.running_count).toBe(lastRunningCount);
+    expect(findPreRoundSystem(app.preRoundAnalysis, 'hi_lo')?.running_count).toBe(lastRunningCount);
+    expect(findPreRoundSystem(app.currentRoundPreBetAnalysis, 'hi_lo')?.running_count).toBe(lastRunningCount);
+    expect(app.currentRoundPreBetAnalysis?.snapshot_stale).toBeTrue();
+    expect(app.currentRoundPreBetAnalysis?.captured_at).toBeTruthy();
     expect(app.actionGuidance).toContain('foi mantida sem recalculo automatico');
   });
 
@@ -426,8 +907,9 @@ describe('AppComponent', () => {
     app.confirmSeenCardsSetup();
     app.analyzePreRound();
 
-    const preRoundUnits = app.preRoundAnalysis?.betting.bet_units ?? 0;
-    const preRoundEquivalent = app.preRoundAnalysis?.betting.suggested_bet ?? 0;
+    const preRoundHiLo = findPreRoundSystem(app.preRoundAnalysis, 'hi_lo');
+    const preRoundUnits = preRoundHiLo?.suggested_units ?? 0;
+    const preRoundEquivalent = preRoundHiLo?.suggested_amount ?? 0;
 
     app.confirmBettingDecision();
     app.handleModalCardSelected('10');
@@ -439,9 +921,11 @@ describe('AppComponent', () => {
     app.handleModalCardSelected('7');
 
     expect(app.tableState.roundPhase).toBe('ROUND_RESULT');
-    expect(app.currentRoundPreBetAnalysis?.betting.bet_units).toBe(preRoundUnits);
-    expect(app.currentRoundPreBetAnalysis?.betting.suggested_bet).toBe(preRoundEquivalent);
-    expect(app.roundResolutionReasonDescription).toContain('Exposicao teorica definida antes da mao');
+    const snapshotHiLo = findPreRoundSystem(app.currentRoundPreBetAnalysis, 'hi_lo');
+    expect(snapshotHiLo?.suggested_units).toBe(preRoundUnits);
+    expect(snapshotHiLo?.suggested_amount).toBe(preRoundEquivalent);
+    expect(app.currentRoundPreBetAnalysis?.snapshot_stale).toBeFalse();
+    expect(app.roundResolutionReasonDescription).toContain('Analise pre-rodada registrada');
   });
 
   it('should keep seen cards separate from the current round setup', () => {

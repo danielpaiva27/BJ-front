@@ -1,4 +1,4 @@
-import { AnalyzeHandRequest, CardValue as ApiCardValue, RiskProfile } from "./blackjack-analysis.models";
+import { AnalyzeHandRequest, CardValue as ApiCardValue } from "./blackjack-analysis.models";
 
 export type CardValue = ApiCardValue;
 
@@ -78,51 +78,6 @@ export interface BuildAnalyzeRequestOptions {
   bankroll?: AnalyzeHandRequest["bankroll"];
   minimum_bet?: AnalyzeHandRequest["minimum_bet"];
   risk_profile?: AnalyzeHandRequest["risk_profile"];
-}
-
-export type PreRoundShoeStatus =
-  | "muito_desfavoravel"
-  | "desfavoravel"
-  | "neutro"
-  | "neutro_favoravel_leve"
-  | "favoravel"
-  | "muito_favoravel";
-
-export interface PreRoundCountingAnalysis {
-  running_count: number;
-  true_count: number;
-  cards_remaining: number;
-  decks_remaining: number;
-  deck_status: string;
-  shoe_status: PreRoundShoeStatus;
-}
-
-export interface PreRoundBettingAnalysis {
-  suggested_bet: number;
-  bet_units: number;
-  risk_profile: RiskProfile;
-  explanation: string;
-  max_safe_exposure: number;
-  cap_percent: number;
-  cap_applied: boolean;
-}
-
-export interface PreRoundAnalysisSnapshot {
-  counting: PreRoundCountingAnalysis;
-  betting: PreRoundBettingAnalysis;
-  recommendation: string;
-  entry_advice: string;
-  generated_at: string;
-  is_auto_generated: boolean;
-}
-
-export interface BuildPreRoundAnalysisOptions {
-  number_of_decks: number;
-  bankroll: number;
-  minimum_bet: number;
-  risk_profile: RiskProfile;
-  generated_at?: string;
-  is_auto_generated?: boolean;
 }
 
 export interface RegisterCardResult {

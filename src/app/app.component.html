@@ -100,7 +100,7 @@
   <section class="section-card setup-card" *ngIf="isSetupPhase; else shoePhase">
     <div class="section-heading">
       <h2>Configuração da mesa</h2>
-      <p>Defina regras, parâmetros de simulação e perfil de risco antes de iniciar o shoe.</p>
+      <p>Defina regras, parâmetros de simulação e banca antes de iniciar o shoe.</p>
     </div>
 
     <form class="setup-form" (ngSubmit)="startShoe()">
@@ -158,7 +158,7 @@
       </div>
 
       <div class="form-group">
-        <h3>Simulação e risco</h3>
+        <h3>Simulação e banca</h3>
         <div class="setup-grid">
           <label>
             <span>Simulações <app-info-tooltip termKey="simulations" /></span>
@@ -181,14 +181,6 @@
             <input type="number" min="0" [(ngModel)]="config.minimum_bet" name="minimum_bet" />
           </label>
 
-          <label>
-            <span>Perfil de risco</span>
-            <select [(ngModel)]="config.risk_profile" name="risk_profile">
-              <option value="conservative">Conservador</option>
-              <option value="moderate">Moderado</option>
-              <option value="aggressive">Agressivo</option>
-            </select>
-          </label>
         </div>
       </div>
 
@@ -284,7 +276,7 @@
         </div>
 
         <p class="theoretical-note" *ngIf="preRoundAnalysisNeedsRefresh && currentRoundPhase === 'SEEN_CARDS_SETUP'">
-          Novas cartas foram registradas desde a Ãºltima anÃ¡lise prÃ©-rodada. Clique em Analisar prÃ©-rodada para atualizar.
+          Cartas vistas, banca ou regras mudaram desde a última análise pré-rodada. Clique em Analisar pré-rodada para atualizar.
         </p>
 
         <div class="game-actions-grid">
@@ -293,7 +285,7 @@
         </div>
       </section>
 
-      <section class="section-card register-card" *ngIf="showStartHandCard">
+      <section class="section-card register-card pre-round-card" *ngIf="showStartHandCard">
         <div class="section-heading">
           <h2>Iniciar mão</h2>
           <p>No blackjack, a aposta ocorre antes da distribuição das cartas. Esta exposição é apenas simulacional.</p>
@@ -301,53 +293,139 @@
 
         <div class="section-heading">
           <h3>Análise pré-rodada</h3>
-          <p>Execute antes de aceitar a aposta simulacional para avaliar o shoe atual.</p>
+          <p>Compara sistemas de contagem e sugere exposição com base na banca simulada.</p>
         </div>
 
         <div class="game-actions-grid">
-          <button type="button" class="action-button" [disabled]="!canAnalyzePreRound" (click)="analyzePreRound()">Analisar pré-rodada</button>
+          <button
+            type="button"
+            class="action-button"
+            [disabled]="!canAnalyzePreRound"
+            (click)="analyzePreRound()"
+          >
+            {{ isPreRoundAnalysisLoading ? 'Analisando...' : 'Analisar pré-rodada' }}
+          </button>
           <button type="button" class="action-button" *ngIf="showEnterSeenCardsSetup" (click)="enterSeenCardsSetup()">Continuar observando</button>
         </div>
 
+        <p class="loading" *ngIf="isPreRoundAnalysisLoading">Consultando os três sistemas no backend...</p>
+        <p class="error" *ngIf="preRoundAnalysisError">{{ preRoundAnalysisError }}</p>
+
         <p class="theoretical-note" *ngIf="preRoundAnalysisNeedsRefresh">
-          Novas cartas foram registradas desde a última análise pré-rodada. Clique em Analisar pré-rodada para atualizar.
+          Cartas vistas, banca ou regras mudaram desde a última análise pré-rodada. Clique em Analisar pré-rodada para atualizar.
         </p>
 
-        <div class="analysis-grid" *ngIf="preRoundAnalysis as preRound; else noPreRoundAnalysis">
-          <div class="metric-group">
-            <h3>Contagem pré-rodada</h3>
-            <p><span>Running count <app-info-tooltip termKey="runningCount" /></span><strong>{{ preRound.counting.running_count }}</strong></p>
-            <p><span>True count <app-info-tooltip termKey="trueCount" /></span><strong>{{ preRound.counting.true_count | number: '1.2-4' }}</strong></p>
-            <p><span>Cartas restantes</span><strong>{{ preRound.counting.cards_remaining }}</strong></p>
-            <p><span>Status do shoe <app-info-tooltip termKey="shoe" /></span><strong>{{ preRound.counting.deck_status }}</strong></p>
+        <ng-container *ngIf="preRoundAnalysis as preRound; else noPreRoundAnalysis">
+          <div class="pre-round-policy">
+            <div>
+              <span>Política</span>
+              <strong>{{ preRound.policy.policy_label }}</strong>
+            </div>
+            <p>{{ preRound.policy.description }}</p>
+            <small>Sem perfis de risco. A sugestão busca vantagem estimada positiva com exposição limitada.</small>
           </div>
 
-          <div class="metric-group">
-            <h3>Exposição simulacional</h3>
-            <p><span>Perfil de risco</span><strong>{{ getRiskProfileLabel(preRound.betting.risk_profile) }}</strong></p>
-            <p><span>Unidades teóricas <app-info-tooltip termKey="theoreticalUnits" /></span><strong>{{ preRound.betting.bet_units | number: '1.2-2' }}</strong></p>
-            <p>
-              <span>Exposição teórica <app-info-tooltip termKey="theoreticalExposure" /></span>
-              <strong>Equivalente simulado <app-info-tooltip termKey="simulatedEquivalent" />: {{ preRound.betting.suggested_bet | number: '1.2-2' }}</strong>
-            </p>
-            <p><span>Limite seguro simulado</span><strong>{{ preRound.betting.max_safe_exposure | number: '1.2-2' }}</strong></p>
-            <p class="theoretical-note">{{ preRound.betting.explanation }}</p>
+          <div class="pre-round-system-grid">
+            <article
+              class="pre-round-system-card"
+              *ngFor="let system of preRound.systems"
+              [class.most-favorable]="system.system_id === preRound.most_favorable_estimate_system_id"
+            >
+              <header class="pre-round-system-header">
+                <div>
+                  <span class="pre-round-kicker">Sistema de contagem</span>
+                  <h3>{{ system.label }}</h3>
+                </div>
+                <span
+                  class="pre-round-status"
+                  [ngClass]="getPreRoundStatusClass(system.recommendation_status)"
+                >
+                  {{ getPreRoundStatusLabel(system.recommendation_status) }}
+                </span>
+              </header>
+
+              <div class="pre-round-badges">
+                <span>Level {{ system.level }}</span>
+                <span>{{ system.ace_reckoned ? 'Ace-reckoned' : 'Ace-neutral' }}</span>
+                <span *ngIf="system.fractional">Fracionário</span>
+                <span *ngIf="system.system_id === preRound.most_favorable_estimate_system_id">Maior edge estimado</span>
+              </div>
+
+              <p class="pre-round-description">{{ getPreRoundSystemDescription(system.system_id) }}</p>
+
+              <div class="pre-round-metrics">
+                <div><span>Running Count</span><strong>{{ system.running_count | number: '1.0-2' }}</strong></div>
+                <div><span>True Count</span><strong>{{ system.true_count | number: '1.2-4' }}</strong></div>
+                <div><span>Betting True Count</span><strong>{{ system.betting_true_count | number: '1.2-4' }}</strong></div>
+                <div><span>Vantagem estimada</span><strong>{{ formatSignedPercent(system.estimated_player_edge) }}</strong></div>
+                <div><span>Sugestão</span><strong>{{ getPreRoundSuggestionLabel(system) }}</strong></div>
+                <div><span>Equivalente simulado</span><strong>{{ system.suggested_amount | number: '1.2-2' }}</strong></div>
+                <div><span>Exposição da banca</span><strong>{{ formatRate(system.bankroll_exposure_percent) }}</strong></div>
+                <div><span>Risco estimado de quebra</span><strong>{{ getPreRoundRiskLabel(system) }}</strong></div>
+              </div>
+
+              <p class="pre-round-suggestion-reason" *ngIf="getPreRoundObservationReason(system) as reason">
+                <strong>Motivo:</strong> {{ reason }}
+              </p>
+
+              <section
+                class="pre-round-risk-cap-diagnostic"
+                *ngIf="shouldShowMinimumBetRiskCapDiagnostic(system)"
+              >
+                <h4>Diagnostico de unidade minima</h4>
+                <p class="pre-round-risk-cap-lead">
+                  Vantagem positiva, mas a unidade minima e alta para a banca atual.
+                </p>
+                <p><span>Maximo permitido pelo risco</span><strong>{{ system.max_bet_by_risk | number: '1.2-2' }}</strong></p>
+                <p><span>Unidade minima</span><strong>{{ preRound.minimum_bet | number: '1.2-2' }}</strong></p>
+                <p><span>Risco se apostar o minimo</span><strong>{{ formatRate(system.risk_if_minimum_bet) }}</strong></p>
+                <p>
+                  <span>Banca estimada necessaria para minimo com risco <= 5%</span>
+                  <strong>{{ system.minimum_bankroll_required_for_minimum_bet | number: '1.2-2' }}</strong>
+                </p>
+              </section>
+
+              <section class="pre-round-detail" *ngIf="system.playing_true_count !== undefined">
+                <h4>Playing Count</h4>
+                <p><span>Running</span><strong>{{ system.playing_running_count | number: '1.0-2' }}</strong></p>
+                <p><span>True count</span><strong>{{ system.playing_true_count | number: '1.2-4' }}</strong></p>
+              </section>
+
+              <section class="pre-round-detail" *ngIf="system.ace_side_count as aceSideCount">
+                <h4>Ace Side Count</h4>
+                <p><span>Total de ases</span><strong>{{ aceSideCount.total_aces }}</strong></p>
+                <p><span>Ases vistos</span><strong>{{ aceSideCount.seen_aces }}</strong></p>
+                <p><span>Ases restantes</span><strong>{{ aceSideCount.aces_remaining }}</strong></p>
+                <p><span>Ases esperados</span><strong>{{ aceSideCount.expected_aces_remaining | number: '1.2-4' }}</strong></p>
+                <p><span>Excesso de ases</span><strong>{{ aceSideCount.excess_aces | number: '1.2-4' }}</strong></p>
+              </section>
+
+              <section class="pre-round-detail" *ngIf="system.betting_running_count !== undefined">
+                <h4>Betting Count Ajustado</h4>
+                <p><span>Running ajustado</span><strong>{{ system.betting_running_count | number: '1.2-4' }}</strong></p>
+                <p><span>Fator de ases</span><strong>{{ system.ace_adjustment_factor | number: '1.0-2' }}</strong></p>
+              </section>
+
+              <section class="pre-round-detail" *ngIf="system.scaled_running_count !== undefined">
+                <h4>Detalhe fracionário</h4>
+                <p><span>Scaled running count</span><strong>{{ system.scaled_running_count }}</strong></p>
+                <p><span>Escala</span><strong>{{ system.scale }}</strong></p>
+              </section>
+
+              <p class="pre-round-recommendation">{{ system.recommendation_text }}</p>
+            </article>
           </div>
-        </div>
+
+          <p class="simulation-note">
+            A análise pré-rodada estima a favorabilidade do shoe. Ela não garante resultado e não substitui a engine de decisão da mão.
+          </p>
+        </ng-container>
 
         <ng-template #noPreRoundAnalysis>
           <p class="theoretical-note">
-            Execute a análise pré-rodada para visualizar running count, true count, status do shoe e exposição teórica.
+            Execute a análise manual para consultar Hi-Lo, Hi-Opt II e Wong Halves no backend.
           </p>
         </ng-template>
-
-        <p class="theoretical-note" *ngIf="preRoundAnalysis as preRound">
-          {{ preRound.recommendation }}
-        </p>
-
-        <p class="theoretical-note" *ngIf="preRoundAnalysis as preRound">
-          {{ preRound.entry_advice }}
-        </p>
 
         <div class="game-actions-grid">
           <button type="button" class="action-button" *ngIf="showConfirmBettingDecision" (click)="confirmBettingDecision()">Aposta aceita / Iniciar mão</button>
@@ -465,6 +543,15 @@
           <strong>{{ roundResolutionTitle }}</strong>
           <small class="theoretical-note">{{ roundResolutionDescription }}</small>
           <small class="theoretical-note">{{ roundResolutionReasonDescription }}</small>
+
+          <div class="pre-round-snapshot" *ngIf="currentRoundPreBetAnalysis as snapshot">
+            <strong>Análise pré-rodada registrada</strong>
+            <small *ngIf="snapshot.snapshot_stale">Snapshot marcado como desatualizado no início da mão.</small>
+            <p *ngFor="let system of snapshot.systems">
+              <span>{{ system.label }}</span>
+              <strong>{{ getPreRoundSuggestionLabel(system) }}</strong>
+            </p>
+          </div>
 
           <div class="split-results" *ngIf="splitHandsDisplay.length > 0">
             <div class="split-result-row" *ngFor="let hand of splitHandsDisplay" [class]="getSplitHandOutcomeClass(hand)">
@@ -702,7 +789,6 @@
 
           <div class="metric-group" *ngIf="bettingData as betting; else bettingUnavailable">
             <h3>Risco simulacional</h3>
-            <p><span>Perfil de risco</span><strong>{{ getRiskProfileLabel(betting.risk_profile) }}</strong></p>
             <p class="theoretical-units"><span>Unidades teóricas <app-info-tooltip termKey="theoreticalUnits" /></span><strong>{{ betting.bet_units | number: '1.2-2' }}</strong></p>
             <p><span>Exposição teórica sugerida <app-info-tooltip termKey="theoreticalExposure" /></span><strong>Equivalente simulado: {{ betting.suggested_bet | number: '1.2-2' }}</strong></p>
             <p class="theoretical-note">{{ betting.explanation || 'Sem explicação adicional.' }}</p>

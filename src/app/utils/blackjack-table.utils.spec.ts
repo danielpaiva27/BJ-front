@@ -1,6 +1,5 @@
 import { CardValue } from "../models/blackjack-table.models";
 import {
-  buildPreRoundAnalysis,
   buildAnalyzeHandRequest,
   computeLiveShoeCounting,
   createInitialShoeCounts,
@@ -193,25 +192,6 @@ describe("blackjack-table.utils", () => {
     expect(getTotalRemainingCards(withOneCard)).toBe(51);
   });
 
-  it("builds neutral pre-round analysis for untouched shoe", () => {
-    const state = createInitialTableState(6);
-    const preRound = buildPreRoundAnalysis(state, {
-      number_of_decks: 6,
-      bankroll: 1000,
-      minimum_bet: 10,
-      risk_profile: "moderate",
-      generated_at: "2026-06-03T00:00:00.000Z",
-    });
-
-    expect(preRound.counting.running_count).toBe(0);
-    expect(preRound.counting.true_count).toBe(0);
-    expect(preRound.counting.cards_remaining).toBe(312);
-    expect(preRound.counting.deck_status).toBe("Neutro / favoravel baixo");
-    expect(preRound.betting.bet_units).toBe(1);
-    expect(preRound.betting.suggested_bet).toBe(10);
-    expect(preRound.generated_at).toBe("2026-06-03T00:00:00.000Z");
-  });
-
   it("computes lightweight live Hi-Lo counting without pre-round betting analysis", () => {
     let state = createInitialTableState(6);
     state = registerCardAction(state, "2", "seen").state;
@@ -243,105 +223,6 @@ describe("blackjack-table.utils", () => {
     expect(counting.decks_remaining).toBe(0);
     expect(counting.true_count).toBe(0);
     expect(Number.isFinite(counting.true_count)).toBeTrue();
-  });
-
-  it("builds favorable pre-round analysis after many low cards are seen", () => {
-    let state = createInitialTableState(6);
-    const favorableSeenCards: CardValue[] = [
-      "2", "3", "4", "5", "6",
-      "2", "3", "4", "5", "6",
-      "2", "3", "4", "5", "6",
-    ];
-
-    for (const card of favorableSeenCards) {
-      state = registerCardAction(state, card, "seen").state;
-    }
-
-    const preRound = buildPreRoundAnalysis(state, {
-      number_of_decks: 6,
-      bankroll: 1000,
-      minimum_bet: 10,
-      risk_profile: "moderate",
-    });
-
-    expect(preRound.counting.running_count).toBe(15);
-    expect(preRound.counting.true_count).toBeGreaterThanOrEqual(2);
-    expect(preRound.counting.deck_status).toBe("Favoravel");
-    expect(preRound.betting.bet_units).toBe(2);
-    expect(preRound.betting.suggested_bet).toBe(20);
-  });
-
-  it("builds unfavorable pre-round analysis after many high cards are seen", () => {
-    let state = createInitialTableState(6);
-    const unfavorableSeenCards: CardValue[] = ["10", "10", "10", "A", "A", "10", "A"];
-
-    for (const card of unfavorableSeenCards) {
-      state = registerCardAction(state, card, "seen").state;
-    }
-
-    const preRound = buildPreRoundAnalysis(state, {
-      number_of_decks: 6,
-      bankroll: 1000,
-      minimum_bet: 10,
-      risk_profile: "conservative",
-    });
-
-    expect(preRound.counting.running_count).toBe(-7);
-    expect(preRound.counting.true_count).toBeLessThan(0);
-    expect(preRound.counting.deck_status).toBe("Desfavoravel");
-    expect(preRound.betting.bet_units).toBe(1);
-    expect(preRound.recommendation).toContain("Shoe nao favoravel");
-  });
-
-  it("applies bankroll safety cap in aggressive profile", () => {
-    let state = createInitialTableState(1);
-    const lowCards: CardValue[] = [
-      "2", "2", "2", "2",
-      "3", "3", "3", "3",
-      "4", "4", "4", "4",
-      "5", "5", "5", "5",
-      "6", "6", "6", "6",
-    ];
-
-    for (const card of lowCards) {
-      state = registerCardAction(state, card, "seen").state;
-    }
-
-    const preRound = buildPreRoundAnalysis(state, {
-      number_of_decks: 1,
-      bankroll: 1000,
-      minimum_bet: 50,
-      risk_profile: "aggressive",
-    });
-
-    expect(preRound.counting.true_count).toBeGreaterThan(5);
-    expect(preRound.betting.cap_applied).toBeTrue();
-    expect(preRound.betting.max_safe_exposure).toBe(80);
-    expect(preRound.betting.suggested_bet).toBe(80);
-    expect(preRound.betting.bet_units).toBe(1.6);
-  });
-
-  it("keeps true count stable when there are no remaining cards", () => {
-    const state = createInitialTableState(1);
-    const emptyShoeState = {
-      ...state,
-      seenCards: ["2"] as CardValue[],
-      shoeCounts: state.shoeCounts.map((item) => ({
-        ...item,
-        count: 0,
-      })),
-    };
-
-    const preRound = buildPreRoundAnalysis(emptyShoeState, {
-      number_of_decks: 1,
-      bankroll: 1000,
-      minimum_bet: 10,
-      risk_profile: "moderate",
-    });
-
-    expect(preRound.counting.cards_remaining).toBe(0);
-    expect(preRound.counting.decks_remaining).toBe(0);
-    expect(preRound.counting.true_count).toBe(0);
   });
 
   it("builds analyze payload from current table state", () => {

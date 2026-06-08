@@ -388,6 +388,10 @@ h3 {
 	grid-column: span 6;
 }
 
+.pre-round-card {
+	grid-column: 1 / -1;
+}
+
 .table-card {
 	grid-column: span 7;
 }
@@ -459,6 +463,282 @@ h3 {
 .analysis-grid {
 	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 	gap: 1rem;
+}
+
+.pre-round-policy {
+	display: grid;
+	gap: 0.45rem;
+	margin-top: 0.9rem;
+	padding: 0.85rem;
+	border: 1px solid rgba(66, 232, 255, 0.34);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(135deg, rgba(66, 232, 255, 0.12), rgba(255, 209, 91, 0.08)),
+		rgba(255, 255, 255, 0.035);
+}
+
+.pre-round-policy div {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 0.6rem;
+}
+
+.pre-round-policy span,
+.pre-round-kicker {
+	color: var(--cyan);
+	font-size: 0.75rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.pre-round-policy p,
+.pre-round-policy small {
+	margin: 0;
+	color: var(--muted);
+	line-height: 1.4;
+}
+
+.pre-round-system-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+	gap: 0.85rem;
+	margin-top: 0.9rem;
+}
+
+.pre-round-system-card {
+	display: grid;
+	align-content: start;
+	gap: 0.75rem;
+	min-width: 0;
+	padding: 0.9rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 42%),
+		rgba(255, 255, 255, 0.035);
+}
+
+.pre-round-system-card.most-favorable {
+	border-color: rgba(255, 209, 91, 0.56);
+	box-shadow: 0 0 24px rgba(255, 209, 91, 0.1);
+}
+
+.pre-round-system-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: start;
+	gap: 0.75rem;
+}
+
+.pre-round-system-header h3 {
+	margin: 0.18rem 0 0;
+	color: var(--gold);
+	font-size: 1.2rem;
+}
+
+.pre-round-status,
+.pre-round-badges span {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	border: 1px solid var(--line-soft);
+	border-radius: 999px;
+	font-size: 0.72rem;
+	font-weight: 900;
+	line-height: 1.2;
+}
+
+.pre-round-status {
+	flex: 0 0 auto;
+	padding: 0.35rem 0.55rem;
+}
+
+.pre-round-badges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.35rem;
+}
+
+.pre-round-badges span {
+	padding: 0.25rem 0.48rem;
+	background: rgba(66, 232, 255, 0.09);
+	color: #c5f9ff;
+}
+
+.pre-round-description,
+.pre-round-recommendation {
+	margin: 0;
+	color: var(--muted);
+	font-size: 0.84rem;
+	line-height: 1.45;
+}
+
+.pre-round-recommendation {
+	padding-top: 0.65rem;
+	border-top: 1px solid var(--line-soft);
+	color: var(--ink);
+}
+
+.pre-round-metrics {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.45rem;
+}
+
+.pre-round-metrics div {
+	display: grid;
+	gap: 0.18rem;
+	padding: 0.55rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.035);
+}
+
+.pre-round-metrics span,
+.pre-round-detail span {
+	color: var(--muted);
+	font-size: 0.69rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.pre-round-metrics strong {
+	color: var(--ink-strong);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+}
+
+.pre-round-detail {
+	display: grid;
+	gap: 0.35rem;
+	padding: 0.65rem;
+	border: 1px solid rgba(255, 209, 91, 0.22);
+	border-radius: var(--radius);
+	background: rgba(255, 209, 91, 0.05);
+}
+
+.pre-round-detail h4 {
+	margin: 0;
+	color: var(--gold);
+	font-size: 0.85rem;
+}
+
+.pre-round-detail p,
+.pre-round-snapshot p {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.75rem;
+	margin: 0;
+}
+
+.pre-round-suggestion-reason {
+	margin: 0;
+	padding: 0.6rem 0.7rem;
+	border: 1px solid rgba(255, 184, 77, 0.34);
+	border-radius: var(--radius);
+	background: rgba(255, 184, 77, 0.1);
+	color: #ffd9a0;
+	font-size: 0.82rem;
+	line-height: 1.4;
+}
+
+.pre-round-risk-cap-diagnostic {
+	display: grid;
+	gap: 0.38rem;
+	padding: 0.65rem;
+	border: 1px solid rgba(255, 184, 77, 0.38);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(135deg, rgba(255, 184, 77, 0.16), rgba(66, 232, 255, 0.08)),
+		rgba(255, 255, 255, 0.03);
+}
+
+.pre-round-risk-cap-diagnostic h4 {
+	margin: 0;
+	color: #ffd58d;
+	font-size: 0.84rem;
+}
+
+.pre-round-risk-cap-diagnostic p {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.75rem;
+	margin: 0;
+	font-size: 0.82rem;
+	line-height: 1.38;
+}
+
+.pre-round-risk-cap-diagnostic span {
+	color: var(--muted);
+	font-size: 0.69rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.pre-round-risk-cap-diagnostic strong {
+	color: var(--ink-strong);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+}
+
+.pre-round-risk-cap-diagnostic .pre-round-risk-cap-lead {
+	display: block;
+	color: #ffdeab;
+	font-size: 0.82rem;
+	line-height: 1.42;
+}
+
+.pre-round-status-observe,
+.pre-round-status-marginal-observe {
+	border-color: rgba(255, 184, 77, 0.48);
+	background: rgba(255, 184, 77, 0.12);
+	color: #ffe0ad;
+}
+
+.pre-round-status-positive-edge-minimum-bet-exceeds-risk-cap {
+	border-color: rgba(255, 184, 77, 0.6);
+	background:
+		linear-gradient(135deg, rgba(255, 184, 77, 0.2), rgba(66, 232, 255, 0.08));
+	color: #ffe5b6;
+}
+
+.pre-round-status-minimum-unit,
+.pre-round-status-favorable-risk-capped,
+.pre-round-status-favorable-controlled {
+	border-color: rgba(73, 226, 139, 0.5);
+	background: rgba(73, 226, 139, 0.12);
+	color: #b9ffd4;
+}
+
+.pre-round-status-favorable-bankroll-limited {
+	border-color: rgba(66, 232, 255, 0.5);
+	background: rgba(66, 232, 255, 0.12);
+	color: #c5f9ff;
+}
+
+.pre-round-status-invalid-bankroll,
+.pre-round-status-invalid-minimum-bet,
+.pre-round-status-insufficient-bankroll {
+	border-color: rgba(255, 78, 102, 0.52);
+	background: rgba(255, 78, 102, 0.13);
+	color: #ffc1cb;
+}
+
+.pre-round-snapshot {
+	display: grid;
+	gap: 0.45rem;
+	margin-top: 0.8rem;
+	padding: 0.7rem;
+	border: 1px solid rgba(66, 232, 255, 0.32);
+	border-radius: var(--radius);
+	background: rgba(66, 232, 255, 0.08);
+}
+
+.pre-round-snapshot > strong {
+	color: var(--cyan);
+}
+
+.pre-round-snapshot small {
+	color: var(--warning);
 }
 
 .game-actions-grid,
