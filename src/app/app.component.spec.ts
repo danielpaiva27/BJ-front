@@ -124,6 +124,44 @@ describe('AppComponent', () => {
     return response?.systems.find((system) => system.system_id === systemId);
   }
 
+  function assertPreRoundResponseContract(
+    response: Pick<PreRoundAnalysisResponse, 'systems' | 'policy' | 'cards_seen' | 'cards_remaining' | 'decks_remaining'>,
+  ): void {
+    const systemIds = response.systems.map((system) => system.system_id);
+    expect(systemIds).toEqual(['hi_lo', 'hi_opt_ii', 'wong_halves']);
+    expect(new Set(systemIds).size).toBe(systemIds.length);
+
+    for (const system of response.systems) {
+      for (const requiredNumericField of [
+        'true_count',
+        'betting_true_count',
+        'estimated_player_edge',
+        'suggested_amount',
+        'estimated_risk_of_ruin',
+        'risk_of_ruin_limit',
+      ] as const) {
+        expect(Number.isFinite(system[requiredNumericField]))
+          .withContext(`${system.system_id}.${requiredNumericField} should be finite`)
+          .toBeTrue();
+      }
+    }
+
+    const hiOptII = response.systems.find((system) => system.system_id === 'hi_opt_ii');
+    expect(hiOptII).toBeDefined();
+    expect(hiOptII?.ace_side_count).toBeDefined();
+    expect(hiOptII?.playing_running_count).toBeDefined();
+    expect(hiOptII?.betting_running_count).toBeDefined();
+
+    const wongHalves = response.systems.find((system) => system.system_id === 'wong_halves');
+    expect(wongHalves).toBeDefined();
+    expect(wongHalves?.scaled_running_count).toBeDefined();
+    expect(wongHalves?.scale).toBe(2);
+
+    const serialized = JSON.stringify(response).toLowerCase();
+    expect(serialized).not.toContain('nan');
+    expect(serialized).not.toContain('infinity');
+  }
+
   function buildAction(action: ActionAnalysis['action']): ActionAnalysis {
     return {
       action,
@@ -447,6 +485,135 @@ describe('AppComponent', () => {
     }));
     expect(payload.systems).toBeUndefined();
     expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+  });
+
+  it('should keep pre-round snapshot coherent through hand start and decision analysis calls', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const pendingPreRoundResponse = new Subject<PreRoundAnalysisResponse>();
+    const pendingDecisionResponse = new Subject<AnalyzeHandResponse>();
+
+    blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(pendingPreRoundResponse.asObservable());
+    blackjackAnalysisServiceSpy.analyzeHand.and.returnValue(pendingDecisionResponse.asObservable());
+
+    app.config.bankroll = 1200;
+    app.config.minimum_bet = 20;
+    app.config.dealer_hits_soft_17 = true;
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.registerCard('3');
+    app.registerCard('4');
+    app.registerCard('5');
+    app.registerCard('6');
+    app.registerCard('10');
+    app.confirmSeenCardsSetup();
+
+    app.analyzePreRound();
+
+    expect(app.isPreRoundAnalysisLoading).toBeTrue();
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(1);
+
+    const preRoundPayload = blackjackAnalysisServiceSpy.analyzePreRound.calls.mostRecent().args[0];
+    expect(preRoundPayload).toEqual(jasmine.objectContaining({
+      number_of_decks: 6,
+      seen_cards: ['2', '3', '4', '5', '6', '10'],
+      bankroll: 1200,
+      minimum_bet: 20,
+      rules: jasmine.objectContaining({
+        dealer_hits_soft_17: true,
+        blackjack_payout: '3:2',
+      }),
+    }));
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+
+    const preRoundResponse = buildPreRoundResponse(preRoundPayload);
+    assertPreRoundResponseContract(preRoundResponse);
+
+    pendingPreRoundResponse.next(preRoundResponse);
+    pendingPreRoundResponse.complete();
+
+    expect(app.isPreRoundAnalysisLoading).toBeFalse();
+    expect(app.preRoundAnalysis).toEqual(preRoundResponse);
+    expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+
+    app.confirmBettingDecision();
+
+    expect(app.currentRoundPreBetAnalysis).not.toBeNull();
+    expect(app.currentRoundPreBetAnalysis?.snapshot_stale).toBeFalse();
+    assertPreRoundResponseContract(app.currentRoundPreBetAnalysis!);
+
+    const snapshotBeforeDecisionAnalysis = JSON.stringify(app.currentRoundPreBetAnalysis);
+
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('10');
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+
+    app.analyzeCurrentDecision();
+
+    expect(app.analysisLoading).toBeTrue();
+    expect(blackjackAnalysisServiceSpy.analyzeHand).toHaveBeenCalledTimes(1);
+
+    const decisionPayload = blackjackAnalysisServiceSpy.analyzeHand.calls.mostRecent().args[0];
+    expect(decisionPayload).toEqual(jasmine.objectContaining({
+      player_hand: ['10', '6'],
+      dealer_upcard: '10',
+      seen_cards: ['2', '3', '4', '5', '6', '10'],
+      bankroll: 1200,
+      minimum_bet: 20,
+      risk_profile: 'moderate',
+      rules: jasmine.objectContaining({
+        dealer_hits_soft_17: true,
+        blackjack_payout: '3:2',
+      }),
+    }));
+
+    const decisionResponse: AnalyzeHandResponse = {
+      recommendation: {
+        best_action: 'stand',
+        monte_carlo_action: 'stand',
+        basic_strategy_action: 'stand',
+        strategy_agreement: true,
+        confidence: 0.78,
+        explanation: 'Cenario de teste integrado',
+      },
+      actions: [
+        {
+          action: 'stand',
+          ev: 0.1,
+          win_rate: 0.44,
+          lose_rate: 0.42,
+          push_rate: 0.14,
+          simulations: 100,
+          wins: 44,
+          losses: 42,
+          pushes: 14,
+          std_dev: 1,
+          standard_error: 0.01,
+          confidence_interval_95: [0.08, 0.12],
+        },
+      ],
+      betting: {
+        suggested_bet: 20,
+        bet_units: 1,
+        risk_profile: 'moderate',
+        explanation: 'Aposta em unidade minima para risco controlado.',
+      },
+    };
+
+    pendingDecisionResponse.next(decisionResponse);
+    pendingDecisionResponse.complete();
+
+    expect(app.analysisLoading).toBeFalse();
+    expect(app.analysisError).toBe('');
+    expect(app.analysisResponse).toEqual(decisionResponse);
+    expect(app.latestBettingData).toEqual(decisionResponse.betting);
+    expect(app.currentRoundPreBetAnalysis).not.toBeNull();
+    expect(JSON.stringify(app.currentRoundPreBetAnalysis)).toBe(snapshotBeforeDecisionAnalysis);
+    assertPreRoundResponseContract(app.currentRoundPreBetAnalysis!);
   });
 
   it('should show loading and disable pre-round analysis while request is pending', () => {
