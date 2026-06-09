@@ -167,6 +167,10 @@ describe('AppComponent', () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
   }
 
+  function dispatchWindowKeyEvent(eventInit: KeyboardEventInit): void {
+    window.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...eventInit }));
+  }
+
   function dispatchKeyOnElement(key: string, element: HTMLElement): void {
     element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
   }
@@ -326,7 +330,7 @@ describe('AppComponent', () => {
       minimum_bankroll_required_for_minimum_bet: 496.73492,
       minimum_bet_exceeds_risk_cap: true,
       recommendation_status: 'positive_edge_minimum_bet_exceeds_risk_cap',
-      recommendation_text: 'Ha vantagem estimada, mas a menor aposta possivel ultrapassa o limite aproximado de risco de quebra de 5% para a banca atual.',
+      recommendation_text: 'Ha vantagem estimada positiva, mas a menor aposta possivel (unidade minima) excede a exposicao permitida pelo limite aproximado de risco de quebra para a banca atual. A politica sugere observar ou usar uma banca maior para essa unidade.',
     }));
 
     blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(of(response));
@@ -336,14 +340,15 @@ describe('AppComponent', () => {
     fixture.detectChanges();
 
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.textContent).toContain('Vantagem positiva, minimo excede risco');
-    expect(compiled.textContent).toContain('Diagnostico de unidade minima');
+    expect(compiled.textContent).toContain('Vantagem positiva, minimo alto');
+    expect(compiled.textContent).toContain('Vantagem positiva, mas unidade minima alta');
+    expect(compiled.textContent).toContain('O shoe parece favoravel, mas a menor aposta possivel excede o limite de risco para a banca atual.');
     expect(compiled.textContent).toContain('Motivo:');
     expect(compiled.textContent).toContain('Unidade minima excede o limite de risco para a banca atual.');
     expect(compiled.textContent).toContain('Maximo permitido pelo risco');
     expect(compiled.textContent).toContain('Unidade minima');
     expect(compiled.textContent).toContain('Risco se apostar o minimo');
-    expect(compiled.textContent).toContain('Banca estimada necessaria para minimo com risco <= 5%');
+    expect(compiled.textContent).toContain('Banca estimada necessaria para esse minimo');
     expect(compiled.textContent).toContain('2.01');
     expect(compiled.textContent).toContain('5.00');
     expect(compiled.textContent).toContain('29.93%');
@@ -353,6 +358,7 @@ describe('AppComponent', () => {
     const text = compiled.textContent?.toLowerCase() ?? '';
     expect(text).not.toContain('aposta segura');
     expect(text).not.toContain('garantia');
+    expect(text).not.toContain('certeza');
     expect(text).not.toContain('lucro garantido');
     expect(text).toContain('hi-lo');
     expect(text).toContain('hi-opt ii');
@@ -368,8 +374,8 @@ describe('AppComponent', () => {
     fixture.detectChanges();
 
     const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
-    expect(text).not.toContain('Diagnostico de unidade minima');
-    expect(text).not.toContain('Banca estimada necessaria para minimo com risco <= 5%');
+    expect(text).not.toContain('Vantagem positiva, mas unidade minima alta');
+    expect(text).not.toContain('Banca estimada necessaria para esse minimo');
   });
 
   it('should render estimated ruin risk without promise language', () => {
@@ -391,6 +397,7 @@ describe('AppComponent', () => {
     expect(text).toContain('risco estimado de quebra');
     expect(text).toContain('limite 5.00%');
     expect(text).not.toContain('aposta segura');
+    expect(text).not.toContain('certeza');
     expect(text).not.toContain('lucro garantido');
   });
 
@@ -533,6 +540,54 @@ describe('AppComponent', () => {
     expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(2);
   });
 
+  it('should mark pre-round analysis as stale after bankroll, minimum bet or rules changes without auto-calling backend', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+
+    let expectedCalls = 1;
+    expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(expectedCalls);
+
+    const mutations: Array<() => void> = [
+      () => {
+        app.config.bankroll += 100;
+      },
+      () => {
+        app.config.minimum_bet += 5;
+      },
+      () => {
+        app.savedRules = {
+          ...(app.savedRules ?? {}),
+          blackjack_payout: app.savedRules?.blackjack_payout === '3:2' ? '6:5' : '3:2',
+        };
+      },
+      () => {
+        app.savedRules = {
+          ...(app.savedRules ?? {}),
+          dealer_hits_soft_17: !Boolean(app.savedRules?.dealer_hits_soft_17),
+        };
+      },
+    ];
+
+    for (const mutate of mutations) {
+      mutate();
+
+      expect(app.preRoundAnalysisNeedsRefresh).toBeTrue();
+      expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(expectedCalls);
+
+      app.analyzePreRound();
+      expectedCalls += 1;
+
+      expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+      expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(expectedCalls);
+    }
+
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+  });
+
   it('should start hand without auto-running pre-round analysis when user skips manual analysis', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -627,6 +682,64 @@ describe('AppComponent', () => {
     expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
   });
 
+  it('should map each seen-cards keyboard digit shortcut individually and keep stale-analysis behavior', () => {
+    const scenarios: Array<{ key: string; value: CardValue }> = [
+      { key: '1', value: 'A' },
+      { key: '2', value: '2' },
+      { key: '3', value: '3' },
+      { key: '4', value: '4' },
+      { key: '5', value: '5' },
+      { key: '6', value: '6' },
+      { key: '7', value: '7' },
+      { key: '8', value: '8' },
+      { key: '9', value: '9' },
+      { key: '0', value: '10' },
+    ];
+
+    for (const scenario of scenarios) {
+      const fixture = TestBed.createComponent(AppComponent);
+      const app = fixture.componentInstance;
+
+      app.startShoe();
+      app.analyzePreRound();
+      expect(app.preRoundAnalysisNeedsRefresh)
+        .withContext(`pre-round should start fresh for key ${scenario.key}`)
+        .toBeFalse();
+
+      app.enterSeenCardsSetup();
+      fixture.detectChanges();
+
+      const valueCountBefore = app.tableState.shoeCounts.find((item) => item.value === scenario.value)?.count ?? 0;
+      const remainingCardsBefore = app.remainingCards;
+      const preRoundCallsBefore = blackjackAnalysisServiceSpy.analyzePreRound.calls.count();
+
+      dispatchWindowKey(scenario.key);
+
+      expect(app.tableState.seenCards)
+        .withContext(`key ${scenario.key} should register ${scenario.value}`)
+        .toEqual([scenario.value]);
+      expect(app.tableState.shoeCounts.find((item) => item.value === scenario.value)?.count)
+        .withContext(`key ${scenario.key} should decrement shoe count for ${scenario.value}`)
+        .toBe(valueCountBefore - 1);
+      expect(app.remainingCards)
+        .withContext(`key ${scenario.key} should reduce total remaining cards`)
+        .toBe(remainingCardsBefore - 1);
+      expect(app.cardModalOpen)
+        .withContext(`key ${scenario.key} should keep seen-cards modal open`)
+        .toBeTrue();
+      expect(app.isSeenCardsContinuousModal)
+        .withContext(`key ${scenario.key} should keep seen-cards context active`)
+        .toBeTrue();
+      expect(app.preRoundAnalysisNeedsRefresh)
+        .withContext(`key ${scenario.key} should mark pre-round analysis as stale`)
+        .toBeTrue();
+      expect(blackjackAnalysisServiceSpy.analyzePreRound.calls.count())
+        .withContext(`key ${scenario.key} should not auto-trigger new pre-round analysis`)
+        .toBe(preRoundCallsBefore);
+      expect(blackjackAnalysisServiceSpy.analyzeHand.calls.count()).toBe(0);
+    }
+  });
+
   it('should update running count and true count with keyboard shortcuts in seen-cards modal', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -645,7 +758,7 @@ describe('AppComponent', () => {
     expect(app.liveShoeCounting.cards_remaining).toBe(309);
   });
 
-  it('should ignore seen-cards keyboard shortcuts while typing in an input field', () => {
+  it('should ignore seen-cards keyboard shortcuts while typing in input, textarea, select and contenteditable', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
 
@@ -654,55 +767,182 @@ describe('AppComponent', () => {
     fixture.detectChanges();
 
     const tempInput = document.createElement('input');
+    const tempTextarea = document.createElement('textarea');
+    const tempSelect = document.createElement('select');
+    tempSelect.appendChild(document.createElement('option'));
+    const tempEditable = document.createElement('div');
+    tempEditable.setAttribute('contenteditable', 'true');
+
     document.body.appendChild(tempInput);
+    document.body.appendChild(tempTextarea);
+    document.body.appendChild(tempSelect);
+    document.body.appendChild(tempEditable);
+
+    const typingTargets: Array<{ label: string; element: HTMLElement }> = [
+      { label: 'input', element: tempInput },
+      { label: 'textarea', element: tempTextarea },
+      { label: 'select', element: tempSelect },
+      { label: 'contenteditable', element: tempEditable },
+    ];
 
     try {
-      tempInput.focus();
-      dispatchKeyOnElement('6', tempInput);
-      expect(app.tableState.seenCards).toEqual([]);
-      expect(app.liveShoeCounting.running_count).toBe(0);
+      for (const target of typingTargets) {
+        target.element.focus();
+        dispatchKeyOnElement('6', target.element);
+        expect(app.tableState.seenCards)
+          .withContext(`shortcut should be ignored while typing in ${target.label}`)
+          .toEqual([]);
+        expect(app.liveShoeCounting.running_count)
+          .withContext(`running count should remain stable while typing in ${target.label}`)
+          .toBe(0);
+        expect(app.cardModalOpen)
+          .withContext(`modal should stay open while typing in ${target.label}`)
+          .toBeTrue();
+      }
     } finally {
       tempInput.remove();
+      tempTextarea.remove();
+      tempSelect.remove();
+      tempEditable.remove();
     }
   });
 
-  it('should not apply seen-cards keyboard shortcuts in non seen-cards modal contexts', () => {
-    const fixture = TestBed.createComponent(AppComponent);
-    const app = fixture.componentInstance;
+  it('should not apply seen-cards shortcuts while other modal contexts are open', () => {
+    const scenarios: Array<{ label: string; setup: (app: AppComponent) => void }> = [
+      {
+        label: 'initial player modal',
+        setup: (app) => {
+          app.startShoe();
+          app.confirmBettingDecision();
+        },
+      },
+      {
+        label: 'dealer upcard modal',
+        setup: (app) => {
+          app.startShoe();
+          app.confirmBettingDecision();
+          app.handleModalCardSelected('10');
+          app.openCardSelectionModal();
+          app.handleModalCardSelected('6');
+          app.openCardSelectionModal();
+        },
+      },
+      {
+        label: 'player hit modal',
+        setup: (app) => {
+          app.startShoe();
+          setPlayerDecisionState(app, ['10', '6'], '10');
+          app.onHit();
+        },
+      },
+      {
+        label: 'player double modal',
+        setup: (app) => {
+          app.startShoe();
+          setPlayerDecisionState(app, ['5', '6'], '10');
+          app.onDouble();
+        },
+      },
+      {
+        label: 'dealer draw modal',
+        setup: (app) => {
+          app.startShoe();
+          app.tableState = {
+            ...app.tableState,
+            roundPhase: 'DEALER_TURN',
+          };
+          app.startDealerDraw();
+        },
+      },
+    ];
 
-    app.startShoe();
-    app.confirmBettingDecision();
-    fixture.detectChanges();
+    for (const scenario of scenarios) {
+      const fixture = TestBed.createComponent(AppComponent);
+      const app = fixture.componentInstance;
 
-    expect(app.cardModalOpen).toBeTrue();
-    expect(app.isSeenCardsContinuousModal).toBeFalse();
+      scenario.setup(app);
+      fixture.detectChanges();
 
-    dispatchWindowKey('8');
+      expect(app.cardModalOpen).withContext(`${scenario.label} should have an open modal`).toBeTrue();
+      expect(app.isSeenCardsContinuousModal).withContext(`${scenario.label} should not be seen-cards context`).toBeFalse();
 
-    expect(app.tableState.seenCards).toEqual([]);
-    expect(app.tableState.playerCards).toEqual([]);
-    expect(app.liveShoeCounting.running_count).toBe(0);
+      const seenCardsBefore = [...app.tableState.seenCards];
+      const playerCardsBefore = [...app.tableState.playerCards];
+      const dealerUpcardBefore = app.tableState.dealerUpcard;
+      const dealerRevealedBefore = [...app.tableState.dealerRevealedCards];
+      const historyCountBefore = app.tableState.history.length;
+      const phaseBefore = app.tableState.roundPhase;
+
+      dispatchWindowKey('8');
+
+      expect(app.tableState.seenCards).withContext(`${scenario.label} should keep seen cards unchanged`).toEqual(seenCardsBefore);
+      expect(app.tableState.playerCards).withContext(`${scenario.label} should keep player cards unchanged`).toEqual(playerCardsBefore);
+      expect(app.tableState.dealerUpcard).withContext(`${scenario.label} should keep dealer upcard unchanged`).toBe(dealerUpcardBefore);
+      expect(app.tableState.dealerRevealedCards).withContext(`${scenario.label} should keep dealer revealed cards unchanged`).toEqual(dealerRevealedBefore);
+      expect(app.tableState.history.length).withContext(`${scenario.label} should not register extra history entries`).toBe(historyCountBefore);
+      expect(app.tableState.roundPhase).withContext(`${scenario.label} should keep round phase unchanged`).toBe(phaseBefore);
+      expect(app.cardModalOpen).withContext(`${scenario.label} should keep modal open`).toBeTrue();
+    }
   });
 
-  it('should ignore keyboard shortcut when target card is unavailable in the shoe', () => {
+  it('should stop keyboard registration when a seen card reaches zero availability', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
 
+    app.config.number_of_decks = 1;
     app.startShoe();
     app.enterSeenCardsSetup();
-    app.tableState = {
-      ...app.tableState,
-      shoeCounts: app.tableState.shoeCounts.map((item) => (
-        item.value === 'A' ? { ...item, count: 0 } : item
-      )),
-    };
     fixture.detectChanges();
 
-    dispatchWindowKey('1');
+    const key = '2';
+    const value: CardValue = '2';
+    const initialCount = app.tableState.shoeCounts.find((item) => item.value === value)?.count ?? 0;
+    expect(initialCount).toBeGreaterThan(0);
 
-    expect(app.tableState.seenCards).toEqual([]);
-    expect(app.tableState.shoeCounts.find((item) => item.value === 'A')?.count).toBe(0);
-    expect(app.liveShoeCounting.running_count).toBe(0);
+    for (let i = 0; i < initialCount; i += 1) {
+      dispatchWindowKey(key);
+    }
+
+    expect(app.tableState.shoeCounts.find((item) => item.value === value)?.count).toBe(0);
+    expect(app.tableState.seenCards).toEqual(Array.from({ length: initialCount }, () => value));
+    expect(app.liveShoeCounting.running_count).toBe(initialCount);
+
+    const seenCardsBeforeExtra = [...app.tableState.seenCards];
+    const historyCountBeforeExtra = app.tableState.history.length;
+
+    dispatchWindowKey(key);
+
+    expect(app.tableState.seenCards).toEqual(seenCardsBeforeExtra);
+    expect(app.tableState.history.length).toBe(historyCountBeforeExtra);
+    expect(app.tableState.shoeCounts.find((item) => item.value === value)?.count).toBe(0);
+    expect(Math.min(...app.tableState.shoeCounts.map((item) => item.count))).toBeGreaterThanOrEqual(0);
+    expect(app.liveShoeCounting.running_count).toBe(initialCount);
+    expect(app.cardRegistrationError).toContain('not available in the shoe');
+    expect(app.cardModalOpen).toBeTrue();
+  });
+
+  it('should process repeated keydown events in seen-cards modal until shoe limit is reached', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.config.number_of_decks = 1;
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    const value: CardValue = '6';
+    const initialCount = app.tableState.shoeCounts.find((item) => item.value === value)?.count ?? 0;
+    expect(initialCount).toBeGreaterThan(0);
+
+    for (let i = 0; i < initialCount + 2; i += 1) {
+      dispatchWindowKeyEvent({ key: '6', repeat: true });
+    }
+
+    expect(app.tableState.seenCards).toEqual(Array.from({ length: initialCount }, () => value));
+    expect(app.tableState.shoeCounts.find((item) => item.value === value)?.count).toBe(0);
+    expect(app.liveShoeCounting.running_count).toBe(initialCount);
+    expect(app.cardRegistrationError).toContain('not available in the shoe');
+    expect(app.cardModalOpen).toBeTrue();
   });
 
   it('should keep pre-round analysis stale after seen-card keyboard registration without auto-analyzing', () => {

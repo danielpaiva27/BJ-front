@@ -2377,7 +2377,7 @@ export class AppComponent {
     const labels: Record<PreRoundRecommendationStatus, string> = {
       observe: 'Observar',
       marginal_observe: 'Marginal: observar',
-      positive_edge_minimum_bet_exceeds_risk_cap: 'Vantagem positiva, minimo excede risco',
+      positive_edge_minimum_bet_exceeds_risk_cap: 'Vantagem positiva, minimo alto',
       minimum_unit: 'Unidade minima',
       favorable_risk_capped: 'Favoravel, risco limitado',
       favorable_controlled: 'Favoravel controlado',

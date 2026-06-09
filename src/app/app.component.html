@@ -372,15 +372,15 @@
                 class="pre-round-risk-cap-diagnostic"
                 *ngIf="shouldShowMinimumBetRiskCapDiagnostic(system)"
               >
-                <h4>Diagnostico de unidade minima</h4>
+                <h4>Vantagem positiva, mas unidade minima alta</h4>
                 <p class="pre-round-risk-cap-lead">
-                  Vantagem positiva, mas a unidade minima e alta para a banca atual.
+                  O shoe parece favoravel, mas a menor aposta possivel excede o limite de risco para a banca atual.
                 </p>
                 <p><span>Maximo permitido pelo risco</span><strong>{{ system.max_bet_by_risk | number: '1.2-2' }}</strong></p>
                 <p><span>Unidade minima</span><strong>{{ preRound.minimum_bet | number: '1.2-2' }}</strong></p>
                 <p><span>Risco se apostar o minimo</span><strong>{{ formatRate(system.risk_if_minimum_bet) }}</strong></p>
                 <p>
-                  <span>Banca estimada necessaria para minimo com risco <= 5%</span>
+                  <span>Banca estimada necessaria para esse minimo</span>
                   <strong>{{ system.minimum_bankroll_required_for_minimum_bet | number: '1.2-2' }}</strong>
                 </p>
               </section>

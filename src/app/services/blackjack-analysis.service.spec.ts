@@ -6,6 +6,7 @@ import {
 import { TestBed } from '@angular/core/testing';
 
 import { environment } from '../../environments/environment';
+import { AnalyzeHandRequest } from '../models/blackjack-analysis.models';
 import { PreRoundAnalysisRequest } from '../models/pre-round-analysis.models';
 import { BlackjackAnalysisService } from './blackjack-analysis.service';
 
@@ -70,5 +71,37 @@ describe('BlackjackAnalysisService', () => {
       systems: [],
       most_favorable_estimate_system_id: 'hi_lo',
     });
+  });
+
+  it('should post decision payload to /analyze-hand', () => {
+    const payload: AnalyzeHandRequest = {
+      player_hand: ['10', '6'],
+      dealer_upcard: '10',
+      seen_cards: ['2', '5', 'A'],
+      rules: {
+        number_of_decks: 6,
+        dealer_hits_soft_17: false,
+        blackjack_payout: '3:2',
+        double_allowed: true,
+        double_after_split: true,
+        surrender_allowed: false,
+        max_splits: 3,
+        dealer_peek: true,
+      },
+      simulations: 100,
+      seed: 42,
+      bankroll: 1000,
+      minimum_bet: 10,
+      risk_profile: 'moderate',
+    };
+
+    service.analyzeHand(payload).subscribe();
+
+    const request = httpTestingController.expectOne(
+      `${environment.apiBaseUrl}/analyze-hand`,
+    );
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual(payload);
+    request.flush({});
   });
 });
