@@ -7,13 +7,18 @@ import { TestBed } from '@angular/core/testing';
 
 import { environment } from '../../environments/environment';
 import { AnalyzeHandRequest } from '../models/blackjack-analysis.models';
-import { PreRoundAnalysisRequest } from '../models/pre-round-analysis.models';
+import {
+  MachineEvPreRoundRequest,
+  MachineEvPreRoundResponse,
+  PreRoundAnalysisRequest,
+} from '../models/pre-round-analysis.models';
 import { BlackjackAnalysisService } from './blackjack-analysis.service';
 
 describe('BlackjackAnalysisService', () => {
   let service: BlackjackAnalysisService;
   let httpTestingController: HttpTestingController;
   const preRoundEndpoint = `${environment.apiBaseUrl}/pre-round-analysis`;
+  const machineEvEndpoint = `${environment.apiBaseUrl}/pre-round-analysis/machine-ev`;
   const analyzeHandEndpoint = `${environment.apiBaseUrl}/analyze-hand`;
 
   beforeEach(() => {
@@ -66,6 +71,7 @@ describe('BlackjackAnalysisService', () => {
     );
     expect((request.request.body as { seen_cards: string[] }).seen_cards.length).toBe(4);
     httpTestingController.expectNone(analyzeHandEndpoint);
+    httpTestingController.expectNone(machineEvEndpoint);
     request.flush({
       cards_seen: 4,
       cards_remaining: 308,
@@ -122,6 +128,128 @@ describe('BlackjackAnalysisService', () => {
     });
   });
 
+  it('should post Machine EV payload to the dedicated endpoint', () => {
+    const payload: MachineEvPreRoundRequest = {
+      number_of_decks: 6,
+      seen_cards: ['2', '5', '10', 'A'],
+      bankroll: 1000,
+      minimum_bet: 10,
+      engine_mode: 'hybrid',
+      include_debug_metrics: false,
+      rules: {
+        blackjack_payout: '3:2',
+        dealer_hits_soft_17: false,
+        double_allowed: true,
+        double_after_split: true,
+        surrender_allowed: false,
+        max_splits: 3,
+        dealer_peek: true,
+      },
+    };
+    const response: MachineEvPreRoundResponse = {
+      model_id: 'machine_ev',
+      label: 'Machine EV',
+      model_type: 'composition_ev',
+      is_human_replicable: false,
+      estimated_next_hand_edge: 0.011,
+      risk_if_minimum_bet: 0.021,
+      minimum_bankroll_required_for_minimum_bet: 1234.56,
+      recommendation_status: 'machine_ev_minimum_bet_within_risk_limit',
+      recommendation_text: 'Estimativa computacional baseada na composição real do shoe.',
+    };
+    let actualResponse: MachineEvPreRoundResponse | undefined;
+
+    service.analyzeMachineEvPreRound(payload).subscribe((value) => {
+      actualResponse = value;
+    });
+
+    const request = httpTestingController.expectOne(machineEvEndpoint);
+    expect(request.request.method).toBe('POST');
+    expect(request.request.body).toEqual(payload);
+    expect(request.request.body).toEqual(jasmine.objectContaining({
+      number_of_decks: 6,
+      seen_cards: ['2', '5', '10', 'A'],
+      bankroll: 1000,
+      minimum_bet: 10,
+      engine_mode: 'hybrid',
+      include_debug_metrics: false,
+    }));
+    httpTestingController.expectNone(preRoundEndpoint);
+    httpTestingController.expectNone(analyzeHandEndpoint);
+
+    request.flush(response);
+
+    expect(actualResponse?.estimated_next_hand_edge).toBe(0.011);
+    expect(actualResponse?.risk_if_minimum_bet).toBe(0.021);
+    expect(actualResponse?.minimum_bankroll_required_for_minimum_bet).toBe(1234.56);
+  });
+
+  it('should send a Machine EV request snapshot instead of mutable input references', () => {
+    const payload: MachineEvPreRoundRequest = {
+      number_of_decks: 6,
+      seen_cards: ['2', 'A'],
+      bankroll: 1000,
+      minimum_bet: 10,
+      engine_mode: 'hybrid',
+      include_debug_metrics: false,
+      rules: {
+        blackjack_payout: '3:2',
+        dealer_hits_soft_17: false,
+      },
+    };
+
+    service.analyzeMachineEvPreRound(payload).subscribe();
+    payload.seen_cards.push('10');
+    payload.rules!.dealer_hits_soft_17 = true;
+
+    const request = httpTestingController.expectOne(machineEvEndpoint);
+    expect(request.request.body.seen_cards).toEqual(['2', 'A']);
+    expect(request.request.body.rules.dealer_hits_soft_17).toBeFalse();
+    expect(request.request.body.include_debug_metrics).toBeFalse();
+    request.flush({
+      model_id: 'machine_ev',
+      label: 'Machine EV',
+      model_type: 'composition_ev',
+      is_human_replicable: false,
+      estimated_next_hand_edge: 0,
+      risk_if_minimum_bet: null,
+      minimum_bankroll_required_for_minimum_bet: null,
+      recommendation_status: 'machine_ev_missing_wager_inputs',
+      recommendation_text: 'Estimativa computacional indisponível para os dados opcionais.',
+    });
+  });
+
+  it('should accept nullable Machine EV risk diagnostics', () => {
+    const payload: MachineEvPreRoundRequest = {
+      number_of_decks: 6,
+      seen_cards: [],
+      engine_mode: 'hybrid',
+      include_debug_metrics: false,
+    };
+    let actualResponse: MachineEvPreRoundResponse | undefined;
+
+    service.analyzeMachineEvPreRound(payload).subscribe((value) => {
+      actualResponse = value;
+    });
+
+    const request = httpTestingController.expectOne(machineEvEndpoint);
+    request.flush({
+      model_id: 'machine_ev',
+      label: 'Machine EV',
+      model_type: 'composition_ev',
+      is_human_replicable: false,
+      estimated_next_hand_edge: -0.004,
+      risk_if_minimum_bet: null,
+      minimum_bankroll_required_for_minimum_bet: null,
+      recommendation_status: 'machine_ev_missing_wager_inputs',
+      recommendation_text: 'Dados de banca ou mínimo não informados.',
+    });
+
+    expect(actualResponse?.estimated_next_hand_edge).toBe(-0.004);
+    expect(actualResponse?.risk_if_minimum_bet).toBeNull();
+    expect(actualResponse?.minimum_bankroll_required_for_minimum_bet).toBeNull();
+  });
+
   it('should post decision payload to /analyze-hand', () => {
     const payload: AnalyzeHandRequest = {
       player_hand: ['10', '6'],
@@ -161,6 +289,7 @@ describe('BlackjackAnalysisService', () => {
     );
     expect((request.request.body as { systems?: unknown }).systems).toBeUndefined();
     httpTestingController.expectNone(preRoundEndpoint);
+    httpTestingController.expectNone(machineEvEndpoint);
     request.flush({});
   });
 

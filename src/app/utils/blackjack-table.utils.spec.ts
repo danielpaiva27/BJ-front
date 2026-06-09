@@ -62,6 +62,13 @@ describe("blackjack-table.utils", () => {
     expect(isGuidedRoundActionAllowed("SHOE_ACTIVE", "START_SEEN_CARDS_SETUP")).toBeTrue();
     expect(isGuidedRoundActionAllowed("SHOE_ACTIVE", "REGISTER_INITIAL_CARD")).toBeFalse();
     expect(isGuidedRoundActionAllowed("BETTING_DECISION", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("INITIAL_DEAL", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("PLAYER_DECISION", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("PLAYER_HIT_PENDING", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("PLAYER_DOUBLE_PENDING", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("DEALER_REVEAL_PENDING", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("DEALER_TURN", "START_SEEN_CARDS_SETUP")).toBeTrue();
+    expect(isGuidedRoundActionAllowed("DEALER_DRAW_PENDING", "START_SEEN_CARDS_SETUP")).toBeTrue();
     expect(isGuidedRoundActionAllowed("BETTING_DECISION", "REGISTER_SEEN_CARD")).toBeFalse();
     expect(isGuidedRoundActionAllowed("PLAYER_DECISION", "HIT")).toBeTrue();
     expect(isGuidedRoundActionAllowed("PLAYER_HIT_PENDING", "DOUBLE")).toBeFalse();

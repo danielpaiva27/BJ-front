@@ -477,6 +477,240 @@ h3 {
 		rgba(255, 255, 255, 0.035);
 }
 
+.machine-ev-section {
+	position: relative;
+	display: grid;
+	gap: 0.75rem;
+	margin-top: 1rem;
+	padding: clamp(0.85rem, 2vw, 1rem);
+	overflow: hidden;
+	border: 1px solid rgba(66, 232, 255, 0.5);
+	border-radius: calc(var(--radius) + 2px);
+	background:
+		linear-gradient(135deg, rgba(66, 232, 255, 0.15), rgba(107, 140, 255, 0.11) 48%, rgba(8, 18, 25, 0.88)),
+		rgba(255, 255, 255, 0.035);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.08),
+		0 0 28px rgba(66, 232, 255, 0.08);
+}
+
+.machine-ev-section.is-stale {
+	border-color: rgba(255, 184, 77, 0.52);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.08),
+		0 0 24px rgba(255, 184, 77, 0.08);
+}
+
+.machine-ev-section::before {
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	content: "";
+	background:
+		repeating-linear-gradient(90deg, transparent 0 38px, rgba(66, 232, 255, 0.035) 38px 39px),
+		linear-gradient(90deg, rgba(66, 232, 255, 0.18), transparent 36%);
+}
+
+.machine-ev-section > * {
+	position: relative;
+	z-index: 1;
+}
+
+.machine-ev-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: start;
+	gap: 1rem;
+}
+
+.machine-ev-header h3,
+.pre-round-human-heading h3 {
+	margin: 0.18rem 0 0;
+}
+
+.machine-ev-header h3 {
+	color: var(--cyan);
+	font-size: 1.35rem;
+	letter-spacing: 0.03em;
+}
+
+.machine-ev-header p,
+.pre-round-human-heading p {
+	margin: 0.25rem 0 0;
+	color: var(--muted);
+	font-size: 0.84rem;
+	line-height: 1.4;
+}
+
+.machine-ev-kicker {
+	color: #bcefff;
+	font-size: 0.7rem;
+	font-weight: 900;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.machine-ev-badges {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 0.4rem;
+}
+
+.machine-ev-badge {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	padding: 0.32rem 0.55rem;
+	border: 1px solid rgba(66, 232, 255, 0.52);
+	border-radius: 999px;
+	background: rgba(66, 232, 255, 0.12);
+	color: #d5fbff;
+	font-size: 0.7rem;
+	font-weight: 900;
+}
+
+.machine-ev-badge.secondary {
+	border-color: rgba(107, 140, 255, 0.48);
+	background: rgba(107, 140, 255, 0.13);
+	color: #dce4ff;
+}
+
+.machine-ev-badge.stale {
+	border-color: rgba(255, 184, 77, 0.58);
+	background: rgba(255, 184, 77, 0.14);
+	color: #ffe0ad;
+}
+
+.machine-ev-card {
+	display: grid;
+	gap: 0.75rem;
+}
+
+.machine-ev-metrics {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 0.65rem;
+}
+
+.machine-ev-metric {
+	display: grid;
+	gap: 0.35rem;
+	min-width: 0;
+	min-height: 6rem;
+	padding: 0.75rem;
+	border: 1px solid rgba(66, 232, 255, 0.2);
+	border-radius: var(--radius);
+	background: rgba(3, 13, 18, 0.46);
+}
+
+.machine-ev-metric:first-child {
+	border-color: rgba(66, 232, 255, 0.42);
+	background:
+		linear-gradient(145deg, rgba(66, 232, 255, 0.1), transparent 65%),
+		rgba(3, 13, 18, 0.55);
+}
+
+.machine-ev-metric span {
+	color: var(--muted);
+	font-size: 0.7rem;
+	font-weight: 900;
+	line-height: 1.35;
+	text-transform: uppercase;
+}
+
+.machine-ev-value {
+	color: var(--ink-strong);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+	font-size: clamp(1.05rem, 2vw, 1.45rem);
+	overflow-wrap: anywhere;
+}
+
+.machine-ev-note,
+.machine-ev-ethical-note,
+.machine-ev-empty,
+.machine-ev-loading,
+.machine-ev-error,
+.machine-ev-stale-note {
+	margin: 0;
+	line-height: 1.45;
+}
+
+.machine-ev-note {
+	padding-top: 0.7rem;
+	border-top: 1px solid rgba(66, 232, 255, 0.2);
+	color: var(--ink);
+	font-size: 0.86rem;
+}
+
+.machine-ev-ethical-note,
+.machine-ev-empty {
+	color: var(--muted);
+	font-size: 0.8rem;
+}
+
+.machine-ev-loading {
+	display: flex;
+	align-items: center;
+	gap: 0.55rem;
+	color: var(--cyan);
+	font-weight: 800;
+}
+
+.machine-ev-loading::before {
+	width: 0.75rem;
+	height: 0.75rem;
+	flex: 0 0 auto;
+	border: 2px solid rgba(66, 232, 255, 0.3);
+	border-top-color: var(--cyan);
+	border-radius: 50%;
+	content: "";
+	animation: machine-ev-spin 800ms linear infinite;
+}
+
+.machine-ev-error,
+.machine-ev-stale-note {
+	padding: 0.6rem 0.7rem;
+	border-radius: var(--radius-sm);
+	font-size: 0.82rem;
+}
+
+.machine-ev-error {
+	border: 1px solid rgba(255, 78, 102, 0.42);
+	background: rgba(255, 78, 102, 0.1);
+	color: #ffc4cd;
+}
+
+.machine-ev-stale-note {
+	border: 1px solid rgba(255, 184, 77, 0.42);
+	background: rgba(255, 184, 77, 0.1);
+	color: #ffe0ad;
+}
+
+@keyframes machine-ev-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.machine-ev-loading::before {
+		animation: none;
+	}
+}
+
+.pre-round-human-heading {
+	display: grid;
+	gap: 0.15rem;
+	margin-top: 1.15rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--line-soft);
+}
+
+.pre-round-human-heading h3 {
+	color: var(--gold);
+}
+
 .pre-round-policy div {
 	display: flex;
 	flex-wrap: wrap;
@@ -739,6 +973,38 @@ h3 {
 
 .pre-round-snapshot small {
 	color: var(--warning);
+}
+
+@media (max-width: 920px) {
+	.machine-ev-metrics {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.machine-ev-metric:last-child {
+		grid-column: 1 / -1;
+	}
+}
+
+@media (max-width: 620px) {
+	.machine-ev-header {
+		display: grid;
+	}
+
+	.machine-ev-badges {
+		justify-content: flex-start;
+	}
+
+	.machine-ev-metrics {
+		grid-template-columns: 1fr;
+	}
+
+	.machine-ev-metric:last-child {
+		grid-column: auto;
+	}
+
+	.machine-ev-badge {
+		white-space: normal;
+	}
 }
 
 .game-actions-grid,

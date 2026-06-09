@@ -5,6 +5,7 @@ import { of, Subject, throwError } from 'rxjs';
 import { ActionAnalysis, AnalyzeHandResponse } from './models/blackjack-analysis.models';
 import { CardValue } from './models/blackjack-table.models';
 import {
+  MachineEvPreRoundResponse,
   PreRoundAnalysisRequest,
   PreRoundAnalysisResponse,
   PreRoundSystemResult,
@@ -117,6 +118,23 @@ describe('AppComponent', () => {
     };
   }
 
+  function buildMachineEvResponse(
+    overrides: Partial<MachineEvPreRoundResponse> = {},
+  ): MachineEvPreRoundResponse {
+    return {
+      model_id: 'machine_ev',
+      label: 'Machine EV',
+      model_type: 'composition_ev',
+      is_human_replicable: false,
+      estimated_next_hand_edge: 0.011,
+      risk_if_minimum_bet: 0.021,
+      minimum_bankroll_required_for_minimum_bet: 1234.56,
+      recommendation_status: 'machine_ev_minimum_bet_within_risk_limit',
+      recommendation_text: 'A Machine EV estimou a vantagem da próxima mão usando a composição real do shoe.',
+      ...overrides,
+    };
+  }
+
   function findPreRoundSystem(
     response: PreRoundAnalysisResponse | null,
     systemId: PreRoundSystemResult['system_id'],
@@ -216,10 +234,11 @@ describe('AppComponent', () => {
   beforeEach(async () => {
     blackjackAnalysisServiceSpy = jasmine.createSpyObj<BlackjackAnalysisService>(
       'BlackjackAnalysisService',
-      ['analyzeHand', 'analyzePreRound'],
+      ['analyzeHand', 'analyzePreRound', 'analyzeMachineEvPreRound'],
     );
     blackjackAnalysisServiceSpy.analyzeHand.and.returnValue(of({}));
     blackjackAnalysisServiceSpy.analyzePreRound.and.callFake((request) => of(buildPreRoundResponse(request)));
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(of(buildMachineEvResponse()));
 
     await TestBed.configureTestingModule({
       imports: [AppComponent],
@@ -346,6 +365,476 @@ describe('AppComponent', () => {
     expect(compiled.textContent).toContain('Aposta aceita / Iniciar mão');
   });
 
+  it('should not render intra-round Hi-Lo/risk panel after decision analysis', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    blackjackAnalysisServiceSpy.analyzeHand.and.returnValue(of({
+      recommendation: {
+        best_action: 'stand',
+        monte_carlo_action: 'stand',
+        basic_strategy_action: 'stand',
+        strategy_agreement: true,
+        confidence: 0.72,
+        explanation: 'Cenario de teste para decisao da mao atual.',
+      },
+      actions: [
+        {
+          ...buildAction('stand'),
+          ev: 0.12,
+          win_rate: 0.45,
+          lose_rate: 0.4,
+          push_rate: 0.15,
+        },
+      ],
+      counting: {
+        running_count: 3,
+        true_count: 0.9,
+        cards_remaining: 300,
+        deck_status: 'test',
+      },
+      betting: {
+        suggested_bet: 20,
+        bet_units: 2,
+        risk_profile: 'moderate',
+        explanation: 'Nao deve aparecer no bloco intra-rodada removido.',
+      },
+    }));
+
+    app.startShoe();
+    app.confirmBettingDecision();
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('10');
+    app.analyzeCurrentDecision();
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    expect(text).toContain('Decisão da engine');
+    expect(text).toContain('Ranking de ações');
+    expect(text).not.toContain('Contagem Hi-Lo e risco simulacional');
+    expect(text).not.toContain('Unidades teóricas');
+    expect(text).not.toContain('Exposição teórica sugerida');
+    expect(text).not.toContain('Modelo acadêmico/simulacional Hi-Lo');
+    expect(text).not.toContain('Os valores desta seção são simulacionais');
+  });
+
+  it('should render Machine EV as a separate computational card with only public metrics', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const responseWithIgnoredDebug = {
+      ...buildMachineEvResponse(),
+      debug_metrics: {
+        states_evaluated: 550,
+        duration_ms: 12,
+        cache_hits: 1,
+        cache_misses: 549,
+        warnings: ['internal warning'],
+        precision_mode: 'exact_observable_initial_states',
+        state_breakdown: [{ state: 'hidden' }],
+        action_evs: { stand: 0.1 },
+        dealer_hole_card: '10',
+      },
+      running_count: 12,
+      true_count: 2,
+      betting_true_count: 2,
+      ace_side_count: { aces_remaining: 20 },
+      scaled_running_count: 24,
+    } as MachineEvPreRoundResponse;
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(
+      of(responseWithIgnoredDebug),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const machineSection = compiled.querySelector('.machine-ev-section');
+    const machineCard = compiled.querySelector('.machine-ev-card');
+    const humanGrid = compiled.querySelector('.pre-round-system-grid');
+    const machineText = machineSection?.textContent ?? '';
+
+    expect(machineSection).not.toBeNull();
+    expect(machineCard).not.toBeNull();
+    expect(humanGrid).not.toBeNull();
+    expect(humanGrid?.contains(machineCard)).toBeFalse();
+    expect(machineSection?.getAttribute('aria-labelledby')).toBe('machine-ev-title');
+    expect(machineSection?.getAttribute('aria-describedby')).toBe('machine-ev-description');
+    expect(machineSection?.querySelector('.machine-ev-metrics')).not.toBeNull();
+    expect(machineSection?.querySelectorAll('.machine-ev-badge').length).toBe(2);
+    expect(machineText).toContain('Machine EV');
+    expect(machineText).toContain('Computacional');
+    expect(machineText).toContain('Não replicável manualmente');
+    expect(machineSection?.querySelectorAll('.machine-ev-metric').length).toBe(3);
+    expect(machineText).toContain('Vantagem estimada da próxima mão');
+    expect(machineText).toContain('Risco se apostar o mínimo');
+    expect(machineText).toContain('Banca estimada necessária para esse mínimo');
+    expect(machineText).toContain('+1.10%');
+    expect(machineText).toContain('2.10%');
+    expect(machineText).toContain('1.234,56');
+
+    const normalizedText = machineText.toLowerCase();
+    for (const hiddenField of [
+      'states_evaluated',
+      'duration_ms',
+      'cache_hits',
+      'cache_misses',
+      'warnings',
+      'precision_mode',
+      'running_count',
+      'true_count',
+      'betting_true_count',
+      'ace_side_count',
+      'scaled_running_count',
+      'action_evs',
+      'state_breakdown',
+      'dealer_hole_card',
+      'suggested_units',
+      'suggested_amount',
+    ]) {
+      expect(normalizedText).not.toContain(hiddenField);
+    }
+    for (const humanSystem of ['hi-lo', 'hi-opt ii', 'wong halves']) {
+      expect(normalizedText).not.toContain(humanSystem);
+    }
+  });
+
+  it('should expose responsive Machine EV structure without pixel-dependent assertions', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const section = (fixture.nativeElement as HTMLElement)
+      .querySelector('.machine-ev-section');
+    expect(section?.querySelector('.machine-ev-card')).not.toBeNull();
+    expect(section?.querySelector('.machine-ev-metrics')).not.toBeNull();
+    expect(section?.querySelectorAll('.machine-ev-metric').length).toBe(3);
+    expect(section?.querySelectorAll('.machine-ev-value').length).toBe(3);
+    expect(section?.querySelectorAll('.machine-ev-badge').length).toBe(2);
+  });
+
+  it('should render a concise empty Machine EV state before analysis', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    fixture.detectChanges();
+
+    const section = (fixture.nativeElement as HTMLElement)
+      .querySelector('.machine-ev-section');
+    expect(section?.querySelector('.machine-ev-card')).toBeNull();
+    expect(section?.querySelector('.machine-ev-empty')?.textContent)
+      .toContain('Execute a análise pré-rodada');
+  });
+
+  it('should format Machine EV signed edge, optional risk and bankroll values', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    expect(app.formatSignedPercent(0.0123)).toBe('+1.23%');
+    expect(app.formatSignedPercent(-0.004)).toBe('-0.40%');
+    expect(app.formatSignedPercent(0)).toBe('0.00%');
+    expect(app.formatSignedPercent(null)).toBe('—');
+    expect(app.formatPercent(0.0213)).toBe('2.13%');
+    expect(app.formatPercent(null)).toBe('—');
+    expect(app.formatCurrencyOrNumber(null)).toBe('—');
+
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(
+      of(buildMachineEvResponse({
+        estimated_next_hand_edge: -0.004,
+        risk_if_minimum_bet: null,
+        minimum_bankroll_required_for_minimum_bet: null,
+      })),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const values = Array.from(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('.machine-ev-value'),
+    ).map((element) => element.textContent?.trim());
+    expect(values).toEqual(['-0.40%', '—', '—']);
+  });
+
+  it('should keep human cards available when Machine EV fails', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    spyOn(console, 'error');
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(
+      throwError(() => new HttpErrorResponse({ status: 503 })),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(app.preRoundAnalysis).not.toBeNull();
+    expect(app.preRoundAnalysisError).toBeNull();
+    expect(app.machineEvAnalysis).toBeNull();
+    expect(app.machineEvError).toContain('Não foi possível calcular a Machine EV');
+    expect(compiled.querySelectorAll('.pre-round-system-card').length).toBe(3);
+    expect(compiled.textContent).toContain('Não foi possível calcular a Machine EV para este snapshot.');
+    expect(compiled.querySelector('.machine-ev-error')?.getAttribute('role')).toBe('alert');
+  });
+
+  it('should use one immutable logical snapshot for human and Machine EV requests', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.config.bankroll = 1400;
+    app.config.minimum_bet = 20;
+    app.config.dealer_hits_soft_17 = true;
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.registerCard('A');
+    app.confirmSeenCardsSetup();
+
+    app.analyzePreRound();
+
+    const humanRequest =
+      blackjackAnalysisServiceSpy.analyzePreRound.calls.mostRecent().args[0];
+    const machineRequest =
+      blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.calls.mostRecent().args[0];
+    expect(machineRequest).toEqual(jasmine.objectContaining({
+      number_of_decks: humanRequest.number_of_decks,
+      seen_cards: humanRequest.seen_cards,
+      bankroll: humanRequest.bankroll,
+      minimum_bet: humanRequest.minimum_bet,
+      rules: humanRequest.rules,
+      engine_mode: 'hybrid',
+      include_debug_metrics: false,
+    }));
+    expect(machineRequest.seen_cards).not.toBe(humanRequest.seen_cards);
+    expect(machineRequest.rules).not.toBe(humanRequest.rules);
+
+    app.enterSeenCardsSetup();
+    app.registerCard('10');
+
+    expect(humanRequest.seen_cards).toEqual(['2', 'A']);
+    expect(machineRequest.seen_cards).toEqual(['2', 'A']);
+  });
+
+  it('should discard an old Machine EV response after the snapshot changes', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const pendingMachineEv = new Subject<MachineEvPreRoundResponse>();
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(
+      pendingMachineEv.asObservable(),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.confirmSeenCardsSetup();
+
+    pendingMachineEv.next(buildMachineEvResponse());
+    pendingMachineEv.complete();
+
+    expect(app.machineEvAnalysis).toBeNull();
+    expect(app.machineEvError).toBeNull();
+    expect(app.machineEvLoading).toBeFalse();
+  });
+
+  it('should discard an old Machine EV error after the snapshot changes', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const pendingMachineEv = new Subject<MachineEvPreRoundResponse>();
+    spyOn(console, 'error');
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(
+      pendingMachineEv.asObservable(),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    app.config.bankroll += 100;
+    pendingMachineEv.error(new HttpErrorResponse({ status: 503 }));
+
+    expect(app.machineEvAnalysis).toBeNull();
+    expect(app.machineEvError).toBeNull();
+    expect(app.machineEvLoading).toBeFalse();
+  });
+
+  it('should keep Machine EV visible when the human analysis fails', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    spyOn(console, 'error');
+    blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(
+      throwError(() => new HttpErrorResponse({ status: 503 })),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(app.preRoundAnalysis).toBeNull();
+    expect(app.preRoundAnalysisError).not.toBeNull();
+    expect(app.machineEvAnalysis).not.toBeNull();
+    expect(app.machineEvError).toBeNull();
+    expect(compiled.querySelector('.machine-ev-card')).not.toBeNull();
+    expect(compiled.querySelectorAll('.pre-round-system-card').length).toBe(0);
+  });
+
+  it('should show Machine EV loading without blocking rendered human results', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const pendingMachineEv = new Subject<MachineEvPreRoundResponse>();
+    blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.and.returnValue(
+      pendingMachineEv.asObservable(),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(app.machineEvLoading).toBeTrue();
+    expect(app.preRoundAnalysis).not.toBeNull();
+    expect(compiled.textContent).toContain('Calculando Machine EV...');
+    expect(compiled.querySelectorAll('.pre-round-system-card').length).toBe(3);
+    expect(compiled.querySelector('.machine-ev-section')?.getAttribute('aria-busy')).toBe('true');
+    expect(compiled.querySelector('.machine-ev-loading')?.getAttribute('role')).toBe('status');
+    expect(compiled.querySelector('.machine-ev-loading')?.getAttribute('aria-live')).toBe('polite');
+
+    pendingMachineEv.next(buildMachineEvResponse());
+    pendingMachineEv.complete();
+
+    expect(app.machineEvLoading).toBeFalse();
+    expect(app.machineEvAnalysis).not.toBeNull();
+  });
+
+  it('should render Machine EV while the human analysis is still loading', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const pendingHuman = new Subject<PreRoundAnalysisResponse>();
+    blackjackAnalysisServiceSpy.analyzePreRound.and.returnValue(
+      pendingHuman.asObservable(),
+    );
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    expect(app.isPreRoundAnalysisLoading).toBeTrue();
+    expect(app.machineEvLoading).toBeFalse();
+    expect(app.machineEvAnalysis).not.toBeNull();
+    expect(compiled.querySelector('.machine-ev-card')).not.toBeNull();
+    expect(compiled.querySelectorAll('.pre-round-system-card').length).toBe(0);
+
+    const humanRequest =
+      blackjackAnalysisServiceSpy.analyzePreRound.calls.mostRecent().args[0];
+    pendingHuman.next(buildPreRoundResponse(humanRequest));
+    pendingHuman.complete();
+
+    expect(app.isPreRoundAnalysisLoading).toBeFalse();
+    expect(app.preRoundAnalysis).not.toBeNull();
+  });
+
+  it('should mark Machine EV as stale when the observed shoe changes', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    expect(app.machineEvAnalysisNeedsRefresh).toBeFalse();
+
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.confirmSeenCardsSetup();
+    fixture.detectChanges();
+
+    const machineSection = (fixture.nativeElement as HTMLElement)
+      .querySelector('.machine-ev-section');
+    expect(app.machineEvAnalysisNeedsRefresh).toBeTrue();
+    expect(machineSection?.classList.contains('is-stale')).toBeTrue();
+    expect(machineSection?.textContent).toContain('Desatualizado');
+    expect(machineSection?.textContent).toContain('Recalcule após mudanças no shoe, banca ou regras');
+    expect(machineSection?.querySelector('.machine-ev-stale-note')?.getAttribute('role')).toBe('status');
+    expect(blackjackAnalysisServiceSpy.analyzeMachineEvPreRound).toHaveBeenCalledTimes(1);
+  });
+
+  it('should mark Machine EV stale after bankroll, minimum bet or rules change', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+
+    const mutations: Array<() => void> = [
+      () => {
+        app.config.bankroll += 100;
+      },
+      () => {
+        app.config.minimum_bet += 5;
+      },
+      () => {
+        app.savedRules = {
+          ...(app.savedRules ?? {}),
+          dealer_hits_soft_17: !Boolean(app.savedRules?.dealer_hits_soft_17),
+        };
+      },
+    ];
+
+    for (const mutate of mutations) {
+      mutate();
+      expect(app.machineEvAnalysisNeedsRefresh).toBeTrue();
+      app.analyzePreRound();
+      expect(app.machineEvAnalysisNeedsRefresh).toBeFalse();
+    }
+  });
+
+  it('should defensively format non-finite Machine EV values', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    expect(app.isFiniteNumber(0)).toBeTrue();
+    expect(app.isFiniteNumber(Number.NaN)).toBeFalse();
+    expect(app.isFiniteNumber(Number.POSITIVE_INFINITY)).toBeFalse();
+    expect(app.formatSignedPercent(Number.NaN)).toBe('—');
+    expect(app.formatSignedPercent(Number.NEGATIVE_INFINITY)).toBe('—');
+    expect(app.formatPercent(Number.POSITIVE_INFINITY)).toBe('—');
+    expect(app.formatCurrencyOrNumber(Number.NaN)).toBe('—');
+  });
+
+  it('should keep prohibited betting language out of the Machine EV card', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    fixture.detectChanges();
+
+    const text = (fixture.nativeElement as HTMLElement)
+      .querySelector('.machine-ev-section')
+      ?.textContent?.toLowerCase() ?? '';
+    for (const forbidden of [
+      'garantido',
+      'garantia',
+      'aposta segura',
+      'segura',
+      'certeza',
+      'vencer o cassino',
+      'jogue agora',
+      'chance certa',
+      'lucro certo',
+      'infalível',
+      'aposta recomendada',
+    ]) {
+      expect(text).not.toContain(forbidden);
+    }
+  });
+
   it('should render positive-edge minimum-bet risk-cap status and diagnostic block', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -411,7 +900,9 @@ describe('AppComponent', () => {
     app.analyzePreRound();
     fixture.detectChanges();
 
-    const text = (fixture.nativeElement as HTMLElement).textContent ?? '';
+    const text = (fixture.nativeElement as HTMLElement)
+      .querySelector('.pre-round-system-grid')
+      ?.textContent ?? '';
     expect(text).not.toContain('Vantagem positiva, mas unidade minima alta');
     expect(text).not.toContain('Banca estimada necessaria para esse minimo');
   });
@@ -484,6 +975,24 @@ describe('AppComponent', () => {
       }),
     }));
     expect(payload.systems).toBeUndefined();
+    expect(blackjackAnalysisServiceSpy.analyzeMachineEvPreRound).toHaveBeenCalledTimes(1);
+    const machineEvPayload =
+      blackjackAnalysisServiceSpy.analyzeMachineEvPreRound.calls.mostRecent().args[0];
+    expect(machineEvPayload).toEqual(jasmine.objectContaining({
+      number_of_decks: 6,
+      seen_cards: ['2', 'A'],
+      bankroll: 1500,
+      minimum_bet: 25,
+      engine_mode: 'hybrid',
+      include_debug_metrics: false,
+      rules: jasmine.objectContaining({
+        blackjack_payout: '6:5',
+        dealer_hits_soft_17: true,
+        double_after_split: true,
+        surrender_allowed: false,
+        dealer_peek: true,
+      }),
+    }));
     expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
   });
 
@@ -796,6 +1305,124 @@ describe('AppComponent', () => {
     expect(app.tableState.shoeCounts.find((item) => item.value === '10')?.count).toBe(tenCountBefore);
   });
 
+  it('should keep seen-cards action available after bet acceptance and during active hand', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.confirmBettingDecision();
+
+    expect(app.tableState.roundPhase).toBe('INITIAL_DEAL');
+    expect(app.showEnterSeenCardsSetup).toBeTrue();
+
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('10');
+
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+    expect(app.showEnterSeenCardsSetup).toBeTrue();
+
+    fixture.detectChanges();
+    expect((fixture.nativeElement as HTMLElement).textContent).toContain('Registrar cartas vistas');
+  });
+
+  it('should register seen cards during active hand without resetting hand or accepted bet', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.confirmBettingDecision();
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('9');
+    app.analyzeCurrentDecision();
+
+    const playerBefore = [...app.tableState.playerCards];
+    const dealerUpcardBefore = app.tableState.dealerUpcard;
+    const seenCardsBefore = [...app.tableState.seenCards];
+    const remainingBefore = app.remainingCards;
+
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+    expect(app.analysisResponse).not.toBeNull();
+
+    app.enterSeenCardsSetup();
+    expect(app.tableState.roundPhase).toBe('SEEN_CARDS_SETUP');
+    app.registerCard('2');
+    app.confirmSeenCardsSetup();
+
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+    expect(app.tableState.playerCards).toEqual(playerBefore);
+    expect(app.tableState.dealerUpcard).toBe(dealerUpcardBefore);
+    expect(app.tableState.seenCards).toEqual([...seenCardsBefore, '2']);
+    expect(app.remainingCards).toBe(remainingBefore - 1);
+    expect(app.analysisResponse).toBeNull();
+  });
+
+  it('should keep hand state valid when unavailable seen card is attempted during active hand', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.config.number_of_decks = 1;
+    app.startShoe();
+    app.confirmBettingDecision();
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('9');
+
+    const playerBefore = [...app.tableState.playerCards];
+    const dealerUpcardBefore = app.tableState.dealerUpcard;
+
+    app.enterSeenCardsSetup();
+    const initialTwoCount = app.tableState.shoeCounts.find((item) => item.value === '2')?.count ?? 0;
+    for (let index = 0; index < initialTwoCount; index += 1) {
+      app.registerCard('2');
+    }
+
+    expect(app.tableState.shoeCounts.find((item) => item.value === '2')?.count).toBe(0);
+
+    const historyBeforeExtra = app.tableState.history.length;
+    app.registerCard('2');
+
+    expect(app.cardRegistrationError).toContain('not available in the shoe');
+    expect(app.tableState.history.length).toBe(historyBeforeExtra);
+    expect(app.tableState.shoeCounts.find((item) => item.value === '2')?.count).toBe(0);
+    expect(Math.min(...app.tableState.shoeCounts.map((item) => item.count))).toBeGreaterThanOrEqual(0);
+    expect(app.tableState.playerCards).toEqual(playerBefore);
+    expect(app.tableState.dealerUpcard).toBe(dealerUpcardBefore);
+    expect(app.tableState.roundPhase).toBe('SEEN_CARDS_SETUP');
+
+    app.confirmSeenCardsSetup();
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+  });
+
+  it('should register seen card from keyboard shortcut during active hand', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.confirmBettingDecision();
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('9');
+
+    app.enterSeenCardsSetup();
+    fixture.detectChanges();
+
+    dispatchWindowKey('5');
+
+    expect(app.tableState.seenCards).toContain('5');
+    expect(app.cardModalOpen).toBeTrue();
+    expect(app.isSeenCardsContinuousModal).toBeTrue();
+  });
+
   it('should keep seen-cards modal open while registering multiple seen cards', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -930,6 +1557,12 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
 
     app.startShoe();
+    app.confirmBettingDecision();
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('10');
     app.enterSeenCardsSetup();
     fixture.detectChanges();
 
@@ -1129,6 +1762,32 @@ describe('AppComponent', () => {
     expect(app.preRoundAnalysisNeedsRefresh).toBeTrue();
     expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
     expect(blackjackAnalysisServiceSpy.analyzePreRound).toHaveBeenCalledTimes(1);
+  });
+
+  it('should keep pre-round and Machine EV snapshots stale after seen-card update during active hand', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.analyzePreRound();
+    expect(app.preRoundAnalysisNeedsRefresh).toBeFalse();
+    expect(app.machineEvAnalysisNeedsRefresh).toBeFalse();
+
+    app.confirmBettingDecision();
+    app.handleModalCardSelected('10');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('6');
+    app.openCardSelectionModal();
+    app.handleModalCardSelected('10');
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.confirmSeenCardsSetup();
+
+    expect(app.tableState.roundPhase).toBe('PLAYER_DECISION');
+    expect(app.preRoundAnalysisNeedsRefresh).toBeTrue();
+    expect(app.machineEvAnalysisNeedsRefresh).toBeTrue();
   });
 
   it('should support Backspace/Delete undo and Enter/Escape close in seen-cards modal shortcuts', () => {

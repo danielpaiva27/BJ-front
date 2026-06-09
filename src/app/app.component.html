@@ -241,7 +241,7 @@
       <section class="section-card register-card seen-cards-card" *ngIf="showSeenCardsDefinitionCard">
         <div class="section-heading">
           <h2>Definir cartas já vistas</h2>
-          <p>Use esta etapa para informar cartas que já saíram neste shoe antes da rodada atual.</p>
+          <p>Use esta etapa para informar cartas que já saíram neste shoe antes ou durante a rodada atual.</p>
         </div>
 
         <div class="stat-item seen-card-summary">
@@ -303,7 +303,7 @@
             [disabled]="!canAnalyzePreRound"
             (click)="analyzePreRound()"
           >
-            {{ isPreRoundAnalysisLoading ? 'Analisando...' : 'Analisar pré-rodada' }}
+            {{ (isPreRoundAnalysisLoading || machineEvLoading) ? 'Analisando...' : 'Analisar pré-rodada' }}
           </button>
           <button type="button" class="action-button" *ngIf="showEnterSeenCardsSetup" (click)="enterSeenCardsSetup()">Continuar observando</button>
         </div>
@@ -315,7 +315,101 @@
           Cartas vistas, banca ou regras mudaram desde a última análise pré-rodada. Clique em Analisar pré-rodada para atualizar.
         </p>
 
+        <section
+          class="machine-ev-section"
+          [class.is-stale]="machineEvAnalysisNeedsRefresh"
+          [attr.aria-busy]="machineEvLoading"
+          aria-labelledby="machine-ev-title"
+          aria-describedby="machine-ev-description"
+        >
+          <header class="machine-ev-header">
+            <div>
+              <span class="machine-ev-kicker">Modelo computacional</span>
+              <h3 id="machine-ev-title">Machine EV</h3>
+              <p id="machine-ev-description">
+                Estimativa probabilística baseada na composição real do shoe.
+              </p>
+            </div>
+            <div class="machine-ev-badges">
+              <span class="machine-ev-badge">Computacional</span>
+              <span class="machine-ev-badge secondary">Não replicável manualmente</span>
+              <span
+                class="machine-ev-badge stale"
+                *ngIf="machineEvAnalysisNeedsRefresh"
+              >
+                Desatualizado
+              </span>
+            </div>
+          </header>
+
+          <p
+            class="machine-ev-loading"
+            *ngIf="machineEvLoading"
+            role="status"
+            aria-live="polite"
+          >
+            Calculando Machine EV...
+          </p>
+          <p
+            class="machine-ev-error"
+            *ngIf="machineEvError"
+            role="alert"
+          >
+            {{ machineEvError }}
+          </p>
+
+          <article class="machine-ev-card" *ngIf="machineEvAnalysis as machineEv">
+            <div
+              class="machine-ev-stale-note"
+              *ngIf="machineEvAnalysisNeedsRefresh"
+              role="status"
+              aria-live="polite"
+            >
+              Recalcule após mudanças no shoe, banca ou regras.
+            </div>
+
+            <div class="machine-ev-metrics">
+              <div class="machine-ev-metric">
+                <span>Vantagem estimada da próxima mão</span>
+                <strong class="machine-ev-value">
+                  {{ formatSignedPercent(machineEv.estimated_next_hand_edge) }}
+                </strong>
+              </div>
+              <div class="machine-ev-metric">
+                <span>Risco se apostar o mínimo</span>
+                <strong class="machine-ev-value">
+                  {{ formatPercent(machineEv.risk_if_minimum_bet) }}
+                </strong>
+              </div>
+              <div class="machine-ev-metric">
+                <span>Banca estimada necessária para esse mínimo</span>
+                <strong class="machine-ev-value">
+                  {{ formatCurrencyOrNumber(machineEv.minimum_bankroll_required_for_minimum_bet) }}
+                </strong>
+              </div>
+            </div>
+
+            <p class="machine-ev-note">{{ machineEv.recommendation_text }}</p>
+            <p class="machine-ev-ethical-note">
+              Leitura probabilística; não prevê resultados individuais.
+            </p>
+          </article>
+
+          <p
+            class="machine-ev-empty"
+            *ngIf="!machineEvLoading && !machineEvError && !machineEvAnalysis"
+          >
+            Execute a análise pré-rodada para gerar esta leitura computacional.
+          </p>
+        </section>
+
         <ng-container *ngIf="preRoundAnalysis as preRound; else noPreRoundAnalysis">
+          <div class="pre-round-human-heading">
+            <span class="pre-round-kicker">Leituras manuais</span>
+            <h3>Sistemas de contagem</h3>
+            <p>Hi-Lo, Hi-Opt II e Wong Halves permanecem separados da Machine EV.</p>
+          </div>
+
           <div class="pre-round-policy">
             <div>
               <span>Política</span>
@@ -660,6 +754,10 @@
             <button type="button" class="action-button" *ngIf="showRoundResultButton" (click)="showRoundResult()">Mostrar resultado</button>
           </div>
 
+          <div class="game-actions-grid" *ngIf="showEnterSeenCardsSetup && !showStartHandCard">
+            <button type="button" class="action-button" (click)="enterSeenCardsSetup()">Registrar cartas vistas</button>
+          </div>
+
           <div class="game-actions-grid" *ngIf="visiblePlayerActions.length > 0">
             <button
               type="button"
@@ -763,47 +861,6 @@
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section class="section-card risk-card" *ngIf="analysisResponse">
-        <div class="section-heading">
-          <h2>Contagem Hi-Lo <app-info-tooltip termKey="hiLo" /> e risco simulacional</h2>
-          <p>Leitura acadêmica do shoe, da contagem e da exposição simulada.</p>
-        </div>
-
-        <div class="analysis-grid">
-          <div class="metric-group" *ngIf="countingData as counting; else countingUnavailable">
-            <h3>Contagem</h3>
-            <p><span>Running count <app-info-tooltip termKey="runningCount" /></span><strong>{{ counting.running_count }}</strong></p>
-            <p><span>True count <app-info-tooltip termKey="trueCount" /></span><strong>{{ counting.true_count | number: '1.2-4' }}</strong></p>
-            <p><span>Cartas restantes</span><strong>{{ counting.cards_remaining }}</strong></p>
-            <p><span>Status do shoe <app-info-tooltip termKey="shoe" /></span><strong>{{ counting.deck_status }}</strong></p>
-          </div>
-
-          <ng-template #countingUnavailable>
-            <div class="metric-group">
-              <h3>Contagem</h3>
-              <p>Dados indisponíveis para o estado analisado.</p>
-            </div>
-          </ng-template>
-
-          <div class="metric-group" *ngIf="bettingData as betting; else bettingUnavailable">
-            <h3>Risco simulacional</h3>
-            <p class="theoretical-units"><span>Unidades teóricas <app-info-tooltip termKey="theoreticalUnits" /></span><strong>{{ betting.bet_units | number: '1.2-2' }}</strong></p>
-            <p><span>Exposição teórica sugerida <app-info-tooltip termKey="theoreticalExposure" /></span><strong>Equivalente simulado: {{ betting.suggested_bet | number: '1.2-2' }}</strong></p>
-            <p class="theoretical-note">{{ betting.explanation || 'Sem explicação adicional.' }}</p>
-          </div>
-
-          <ng-template #bettingUnavailable>
-            <div class="metric-group">
-              <h3>Risco simulacional</h3>
-              <p>Dados de risco indisponíveis para o estado analisado.</p>
-            </div>
-          </ng-template>
-        </div>
-        <p class="simulation-note">
-          Os valores desta seção são simulacionais e não representam recomendação de aposta real.
-        </p>
       </section>
 
       <section class="section-card metadata-card" *ngIf="analysisResponse as response">

@@ -13,6 +13,8 @@ import {
   GuidedRoundPhase,
 } from './models/blackjack-table.models';
 import {
+  MachineEvPreRoundRequest,
+  MachineEvPreRoundResponse,
   PreRoundAnalysisRequest,
   PreRoundAnalysisResponse,
   PreRoundRecommendationStatus,
@@ -54,6 +56,12 @@ interface TableSetupConfig {
   seed: number;
   bankroll: number;
   minimum_bet: number;
+}
+
+interface PreRoundRequestSnapshot {
+  signature: string;
+  humanRequest: PreRoundAnalysisRequest;
+  machineEvRequest: MachineEvPreRoundRequest;
 }
 
 type VisualRoundPhase = 'shoe_active' | 'dealer_reveal' | 'round_finished';
@@ -183,6 +191,9 @@ export class AppComponent {
   latestBettingData: AnalyzeHandResponse['betting'] | null = null;
   isPreRoundAnalysisLoading = false;
   preRoundAnalysisError: string | null = null;
+  machineEvAnalysis: MachineEvPreRoundResponse | null = null;
+  machineEvLoading = false;
+  machineEvError: string | null = null;
   actionGuidance = '';
   cardRegistrationFeedback = '';
   visualRoundPhase: VisualRoundPhase = 'shoe_active';
@@ -206,6 +217,22 @@ export class AppComponent {
   preRoundAnalysis: PreRoundAnalysisResponse | null = null;
   currentRoundPreBetAnalysis: RoundPreBetAnalysisSnapshot | null = null;
   private preRoundAnalysisSignature = '';
+  private machineEvAnalysisSignature = '';
+  private preRoundRequestGeneration = 0;
+  private seenCardsReturnPhase: GuidedRoundPhase | null = null;
+  private seenCardsReturnTarget: CardTarget | null = null;
+
+  private readonly seenCardsEntryPhases = new Set<GuidedRoundPhase>([
+    'SHOE_ACTIVE',
+    'BETTING_DECISION',
+    'INITIAL_DEAL',
+    'PLAYER_DECISION',
+    'PLAYER_HIT_PENDING',
+    'PLAYER_DOUBLE_PENDING',
+    'DEALER_REVEAL_PENDING',
+    'DEALER_TURN',
+    'DEALER_DRAW_PENDING',
+  ]);
 
   readonly cardTargets: CardTarget[] = ['player', 'dealer_upcard', 'seen', 'dealer_revealed'];
   private readonly seenCardsKeyboardShortcutMap: Record<string, CardValue> = {
@@ -241,14 +268,6 @@ export class AppComponent {
 
   get registeredCardsCount(): number {
     return this.tableState.history.length;
-  }
-
-  get countingData() {
-    return this.analysisResponse?.counting ?? null;
-  }
-
-  get bettingData() {
-    return this.analysisResponse?.betting ?? null;
   }
 
   get canAnalyzeCurrentDecision(): boolean {
@@ -556,10 +575,8 @@ export class AppComponent {
   }
 
   get showEnterSeenCardsSetup(): boolean {
-    return (
-      (this.currentRoundPhase === 'SHOE_ACTIVE' || this.currentRoundPhase === 'BETTING_DECISION') &&
-      this.canUseRoundAction('START_SEEN_CARDS_SETUP')
-    );
+    return this.seenCardsEntryPhases.has(this.currentRoundPhase)
+      && this.canUseRoundAction('START_SEEN_CARDS_SETUP');
   }
 
   get showConfirmSeenCards(): boolean {
@@ -599,11 +616,25 @@ export class AppComponent {
   }
 
   get canAnalyzePreRound(): boolean {
-    return this.showStartHandCard && !this.isPreRoundAnalysisLoading;
+    return (
+      this.showStartHandCard
+      && !this.isPreRoundAnalysisLoading
+      && !this.machineEvLoading
+    );
   }
 
   get preRoundAnalysisNeedsRefresh(): boolean {
-    return Boolean(this.preRoundAnalysis && this.preRoundAnalysisSignature !== this.buildPreRoundAnalysisSignature());
+    return Boolean(
+      this.preRoundAnalysis
+      && this.preRoundAnalysisSignature !== this.buildPreRoundSnapshot().signature,
+    );
+  }
+
+  get machineEvAnalysisNeedsRefresh(): boolean {
+    return Boolean(
+      this.machineEvAnalysis
+      && this.machineEvAnalysisSignature !== this.buildPreRoundSnapshot().signature,
+    );
   }
 
   get showConfirmBettingDecision(): boolean {
@@ -823,16 +854,58 @@ export class AppComponent {
       return;
     }
 
+    const shouldReturnToCurrentPhase = (
+      this.currentRoundPhase !== 'SHOE_ACTIVE'
+      && this.currentRoundPhase !== 'BETTING_DECISION'
+      && this.currentRoundPhase !== 'SEEN_CARDS_SETUP'
+    );
+
+    if (shouldReturnToCurrentPhase) {
+      this.seenCardsReturnPhase = this.currentRoundPhase;
+      this.seenCardsReturnTarget = this.tableState.selectedTarget;
+    } else {
+      this.clearSeenCardsSetupReturnState();
+    }
+
     this.advanceRoundPhase('START_SEEN_CARDS_SETUP');
     this.selectTarget('seen');
-    this.actionGuidance = 'Use esta etapa para informar cartas que ja sairam neste shoe antes da rodada atual.';
+    this.actionGuidance = shouldReturnToCurrentPhase
+      ? 'Registro de cartas vistas aberto durante a mao atual. Ao concluir, o fluxo da mao sera retomado com o shoe atualizado.'
+      : 'Use esta etapa para informar cartas que ja sairam neste shoe antes da rodada atual.';
     this.openCardSelectionModal('Registrar cartas vistas');
   }
 
   confirmSeenCardsSetup(): void {
+    if (!this.canUseRoundAction('CONFIRM_SEEN_CARDS')) {
+      this.actionGuidance = 'Acao indisponivel na fase atual da rodada.';
+      return;
+    }
+
+    if (this.seenCardsReturnPhase !== null) {
+      const returnPhase = this.seenCardsReturnPhase;
+      const returnTarget = this.seenCardsReturnTarget;
+      this.clearSeenCardsSetupReturnState();
+
+      this.setRoundPhase(returnPhase);
+      if (returnTarget !== null) {
+        this.tableState = {
+          ...this.tableState,
+          selectedTarget: returnTarget,
+        };
+      }
+
+      // O shoe mudou: limpa analise da mao para evitar manter recomendacao antiga.
+      this.analysisResponse = null;
+      this.analysisError = '';
+      this.actionGuidance = 'Cartas vistas atualizadas durante a mao. Rode nova analise para refletir o shoe atual.';
+      return;
+    }
+
     if (!this.advanceRoundPhase('CONFIRM_SEEN_CARDS')) {
       return;
     }
+
+    this.clearSeenCardsSetupReturnState();
 
     this.actionGuidance = 'Cartas vistas confirmadas. Confirme a mao para iniciar a distribuicao das cartas.';
   }
@@ -876,26 +949,62 @@ export class AppComponent {
       return;
     }
 
-    const payload = this.buildPreRoundAnalysisRequest();
+    const snapshot = this.buildPreRoundSnapshot();
+    const requestGeneration = ++this.preRoundRequestGeneration;
     this.isPreRoundAnalysisLoading = true;
     this.preRoundAnalysisError = null;
+    this.machineEvLoading = true;
+    this.machineEvError = null;
 
     this.blackjackAnalysisService
-      .analyzePreRound(payload)
+      .analyzePreRound(snapshot.humanRequest)
       .pipe(finalize(() => {
-        this.isPreRoundAnalysisLoading = false;
+        if (requestGeneration === this.preRoundRequestGeneration) {
+          this.isPreRoundAnalysisLoading = false;
+        }
       }))
       .subscribe({
         next: (response) => {
+          if (!this.isCurrentPreRoundSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
           this.preRoundAnalysis = response;
-          this.preRoundAnalysisSignature = this.buildPreRoundAnalysisSignature();
+          this.preRoundAnalysisSignature = snapshot.signature;
           this.preRoundAnalysisError = null;
           this.actionGuidance =
             'Analise pre-rodada atualizada pelo backend. Revise os tres sistemas antes de aceitar a exposicao simulada.';
         },
         error: (error: unknown) => {
+          if (!this.isCurrentPreRoundSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
           this.preRoundAnalysisError = this.resolvePreRoundAnalysisErrorMessage(error);
           console.error('Erro ao processar analise pre-rodada da API:', error);
+        },
+      });
+
+    this.blackjackAnalysisService
+      .analyzeMachineEvPreRound(snapshot.machineEvRequest)
+      .pipe(finalize(() => {
+        if (requestGeneration === this.preRoundRequestGeneration) {
+          this.machineEvLoading = false;
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          if (!this.isCurrentPreRoundSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
+          this.machineEvAnalysis = response;
+          this.machineEvAnalysisSignature = snapshot.signature;
+          this.machineEvError = null;
+        },
+        error: (error: unknown) => {
+          if (!this.isCurrentPreRoundSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
+          this.machineEvError = this.resolveMachineEvErrorMessage(error);
+          console.error('Erro ao processar Machine EV pre-rodada da API:', error);
         },
       });
   }
@@ -920,6 +1029,7 @@ export class AppComponent {
   }
 
   startShoe(): void {
+    this.preRoundRequestGeneration += 1;
     this.savedRules = {
       number_of_decks: this.config.number_of_decks,
       dealer_hits_soft_17: this.config.dealer_hits_soft_17,
@@ -944,6 +1054,8 @@ export class AppComponent {
     this.latestBettingData = null;
     this.isPreRoundAnalysisLoading = false;
     this.preRoundAnalysisError = null;
+    this.machineEvLoading = false;
+    this.machineEvError = null;
     this.actionGuidance = 'Shoe iniciado. Defina cartas ja vistas se necessario, ou va direto para o inicio da rodada.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -957,8 +1069,11 @@ export class AppComponent {
     this.roundResolution = null;
     this.clearSplitRoundState();
     this.preRoundAnalysis = null;
+    this.machineEvAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
+    this.machineEvAnalysisSignature = '';
+    this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
   }
 
@@ -1092,6 +1207,7 @@ export class AppComponent {
   }
 
   resetCurrentRound(): void {
+    this.preRoundRequestGeneration += 1;
     const stateForReset = this.getStateWithAllSplitPlayerCards();
 
     this.tableState = {
@@ -1105,6 +1221,8 @@ export class AppComponent {
     this.analysisResponse = null;
     this.isPreRoundAnalysisLoading = false;
     this.preRoundAnalysisError = null;
+    this.machineEvLoading = false;
+    this.machineEvError = null;
     this.actionGuidance = 'Rodada reiniciada. Registre novamente as cartas da rodada atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1117,8 +1235,11 @@ export class AppComponent {
     this.roundResolution = null;
     this.clearSplitRoundState();
     this.preRoundAnalysis = null;
+    this.machineEvAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
+    this.machineEvAnalysisSignature = '';
+    this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
   }
 
@@ -1131,6 +1252,7 @@ export class AppComponent {
       return;
     }
 
+    this.preRoundRequestGeneration += 1;
     this.tableState = {
       ...resetShoe(this.tableState),
       gamePhase: 'shoe_active',
@@ -1143,6 +1265,8 @@ export class AppComponent {
     this.latestBettingData = null;
     this.isPreRoundAnalysisLoading = false;
     this.preRoundAnalysisError = null;
+    this.machineEvLoading = false;
+    this.machineEvError = null;
     this.actionGuidance = 'Shoe reiniciado com as contagens iniciais.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1156,12 +1280,16 @@ export class AppComponent {
     this.roundResolution = null;
     this.clearSplitRoundState();
     this.preRoundAnalysis = null;
+    this.machineEvAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
+    this.machineEvAnalysisSignature = '';
+    this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
   }
 
   startNextRound(): void {
+    this.preRoundRequestGeneration += 1;
     const stateForNextRound = this.getStateWithAllSplitPlayerCards();
 
     this.tableState = {
@@ -1174,6 +1302,8 @@ export class AppComponent {
     this.analysisResponse = null;
     this.isPreRoundAnalysisLoading = false;
     this.preRoundAnalysisError = null;
+    this.machineEvLoading = false;
+    this.machineEvError = null;
     this.actionGuidance = 'Nova rodada iniciada mantendo o shoe atual.';
     this.visualRoundPhase = 'shoe_active';
     this.doubleCardPending = false;
@@ -1186,8 +1316,11 @@ export class AppComponent {
     this.roundResolution = null;
     this.clearSplitRoundState();
     this.preRoundAnalysis = null;
+    this.machineEvAnalysis = null;
     this.currentRoundPreBetAnalysis = null;
     this.preRoundAnalysisSignature = '';
+    this.machineEvAnalysisSignature = '';
+    this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
   }
 
@@ -1548,6 +1681,11 @@ export class AppComponent {
       roundPhase,
     };
     this.visualRoundPhase = this.resolveLegacyVisualRoundPhase(roundPhase);
+  }
+
+  private clearSeenCardsSetupReturnState(): void {
+    this.seenCardsReturnPhase = null;
+    this.seenCardsReturnTarget = null;
   }
 
   private advanceRoundPhase(action: GuidedRoundAction): boolean {
@@ -2295,43 +2433,52 @@ export class AppComponent {
     return 'Ocorreu um erro ao processar a análise.';
   }
 
-  private buildPreRoundAnalysisSignature(): string {
-    const shoeCountsSignature = this.tableState.shoeCounts
-      .map((item) => `${item.value}:${item.count}`)
-      .join('|');
-
-    return [
-      this.tableState.seenCards.join(','),
-      shoeCountsSignature,
-      this.config.number_of_decks,
-      this.config.bankroll,
-      this.config.minimum_bet,
-      this.activeRules.blackjack_payout,
-      this.activeRules.dealer_hits_soft_17,
-      this.activeRules.double_allowed,
-      this.activeRules.double_after_split,
-      this.activeRules.surrender_allowed,
-      this.activeRules.max_splits,
-      this.activeRules.dealer_peek,
-    ].join('#');
-  }
-
-  private buildPreRoundAnalysisRequest(): PreRoundAnalysisRequest {
-    return {
+  private buildPreRoundSnapshot(): PreRoundRequestSnapshot {
+    const rules = {
+      blackjack_payout: this.activeRules.blackjack_payout,
+      dealer_hits_soft_17: this.activeRules.dealer_hits_soft_17,
+      double_allowed: this.activeRules.double_allowed,
+      double_after_split: this.activeRules.double_after_split,
+      surrender_allowed: this.activeRules.surrender_allowed,
+      max_splits: this.activeRules.max_splits,
+      dealer_peek: this.activeRules.dealer_peek,
+    };
+    const snapshotValues = {
       number_of_decks: this.activeRules.number_of_decks ?? this.config.number_of_decks,
       seen_cards: [...this.tableState.seenCards],
       bankroll: this.config.bankroll,
       minimum_bet: this.config.minimum_bet,
-      rules: {
-        blackjack_payout: this.activeRules.blackjack_payout,
-        dealer_hits_soft_17: this.activeRules.dealer_hits_soft_17,
-        double_allowed: this.activeRules.double_allowed,
-        double_after_split: this.activeRules.double_after_split,
-        surrender_allowed: this.activeRules.surrender_allowed,
-        max_splits: this.activeRules.max_splits,
-        dealer_peek: this.activeRules.dealer_peek,
+      rules,
+    };
+
+    return {
+      signature: JSON.stringify({
+        ...snapshotValues,
+        engine_mode: 'hybrid',
+      }),
+      humanRequest: {
+        ...snapshotValues,
+        seen_cards: [...snapshotValues.seen_cards],
+        rules: { ...rules },
+      },
+      machineEvRequest: {
+        ...snapshotValues,
+        seen_cards: [...snapshotValues.seen_cards],
+        rules: { ...rules },
+        engine_mode: 'hybrid',
+        include_debug_metrics: false,
       },
     };
+  }
+
+  private isCurrentPreRoundSnapshot(
+    requestGeneration: number,
+    requestSignature: string,
+  ): boolean {
+    return (
+      requestGeneration === this.preRoundRequestGeneration
+      && requestSignature === this.buildPreRoundSnapshot().signature
+    );
   }
 
   private clonePreRoundAnalysis(
@@ -2442,7 +2589,10 @@ export class AppComponent {
     return 'Sistema classico de contagem balanceada usado como leitura baseline.';
   }
 
-  formatSignedPercent(value: number): string {
+  formatSignedPercent(value: number | null | undefined): string {
+    if (!this.isFiniteNumber(value)) {
+      return '—';
+    }
     const sign = value > 0 ? '+' : '';
     return `${sign}${(value * 100).toFixed(2)}%`;
   }
@@ -2453,6 +2603,14 @@ export class AppComponent {
     }
 
     return 'Nao foi possivel executar a analise pre-rodada. Verifique cartas vistas, banca, unidade minima e regras da mesa.';
+  }
+
+  private resolveMachineEvErrorMessage(error: unknown): string {
+    if (error instanceof HttpErrorResponse && error.status === 0) {
+      return 'Não foi possível conectar ao backend da Machine EV para este snapshot.';
+    }
+
+    return 'Não foi possível calcular a Machine EV para este snapshot.';
   }
 
   getCardPrimaryDisplay(value: CardValue): string {
@@ -2472,6 +2630,29 @@ export class AppComponent {
       return '-';
     }
     return `${(rate * 100).toFixed(2)}%`;
+  }
+
+  formatPercent(value: number | null | undefined): string {
+    if (!this.isFiniteNumber(value)) {
+      return '—';
+    }
+    return `${(value * 100).toFixed(2)}%`;
+  }
+
+  formatCurrencyOrNumber(value: number | null | undefined): string {
+    if (!this.isFiniteNumber(value)) {
+      return '—';
+    }
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  }
+
+  isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value);
   }
 
   formatExpectedValue(ev: number | undefined): string {

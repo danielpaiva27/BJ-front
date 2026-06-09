@@ -4,6 +4,8 @@ import { Observable } from 'rxjs';
 
 import { AnalyzeHandRequest, AnalyzeHandResponse } from '../models/blackjack-analysis.models';
 import {
+  MachineEvPreRoundRequest,
+  MachineEvPreRoundResponse,
   PreRoundAnalysisRequest,
   PreRoundAnalysisResponse,
 } from '../models/pre-round-analysis.models';
@@ -15,6 +17,7 @@ import { environment } from '../../environments/environment';
 export class BlackjackAnalysisService {
   private readonly analyzeHandEndpoint = `${environment.apiBaseUrl}/analyze-hand`;
   private readonly preRoundAnalysisEndpoint = `${environment.apiBaseUrl}/pre-round-analysis`;
+  private readonly machineEvPreRoundEndpoint = `${environment.apiBaseUrl}/pre-round-analysis/machine-ev`;
 
   constructor(private readonly http: HttpClient) {}
 
@@ -24,5 +27,19 @@ export class BlackjackAnalysisService {
 
   analyzePreRound(request: PreRoundAnalysisRequest): Observable<PreRoundAnalysisResponse> {
     return this.http.post<PreRoundAnalysisResponse>(this.preRoundAnalysisEndpoint, request);
+  }
+
+  analyzeMachineEvPreRound(
+    request: MachineEvPreRoundRequest,
+  ): Observable<MachineEvPreRoundResponse> {
+    const requestSnapshot: MachineEvPreRoundRequest = {
+      ...request,
+      seen_cards: [...request.seen_cards],
+      rules: request.rules ? { ...request.rules } : undefined,
+    };
+    return this.http.post<MachineEvPreRoundResponse>(
+      this.machineEvPreRoundEndpoint,
+      requestSnapshot,
+    );
   }
 }

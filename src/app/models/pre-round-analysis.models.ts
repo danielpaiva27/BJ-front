@@ -106,6 +106,37 @@ export interface PreRoundAnalysisResponse {
   most_favorable_estimate_system_id: PreRoundSystemId;
 }
 
+export type MachineEvEngineMode =
+  | 'legacy'
+  | 'deterministic'
+  | 'hybrid'
+  | 'monte_carlo';
+
+export interface MachineEvPreRoundRequest {
+  number_of_decks: number;
+  seen_cards: CardValue[];
+  bankroll?: number | null;
+  minimum_bet?: number | null;
+  rules?: PreRoundRules;
+  engine_mode?: MachineEvEngineMode | null;
+  include_debug_metrics?: boolean;
+  max_duration_ms?: number | null;
+}
+
+export interface MachineEvPreRoundResponse {
+  model_id: 'machine_ev';
+  label: 'Machine EV';
+  model_type: 'composition_ev';
+  is_human_replicable: false;
+  estimated_next_hand_edge: number;
+  risk_if_minimum_bet: number | null;
+  minimum_bankroll_required_for_minimum_bet: number | null;
+  minimum_bet_exceeds_risk_cap?: boolean | null;
+  risk_of_ruin_limit?: number | null;
+  recommendation_status: string;
+  recommendation_text: string;
+}
+
 export interface RoundPreBetAnalysisSnapshot extends PreRoundAnalysisResponse {
   snapshot_stale: boolean;
   captured_at: string;
