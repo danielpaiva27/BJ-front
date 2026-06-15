@@ -375,7 +375,9 @@ h3 {
 }
 
 .setup-card,
-.shoe-state-card {
+.shoe-state-card,
+.counting-panel,
+.classic-round-section {
 	grid-column: 1 / -1;
 }
 
@@ -390,6 +392,16 @@ h3 {
 
 .pre-round-card {
 	grid-column: 1 / -1;
+}
+
+.seen-cards-card,
+.hypothetical-card {
+	grid-column: span 7;
+}
+
+.registration-entry-card,
+.deep-analysis-card {
+	grid-column: span 5;
 }
 
 .table-card {
@@ -475,6 +487,251 @@ h3 {
 	background:
 		linear-gradient(135deg, rgba(66, 232, 255, 0.12), rgba(255, 209, 91, 0.08)),
 		rgba(255, 255, 255, 0.035);
+}
+
+.section-kicker,
+.counting-system-kicker {
+	margin: 0;
+	color: var(--cyan);
+	font-size: 0.72rem;
+	font-weight: 900;
+	text-transform: uppercase;
+	letter-spacing: 0;
+}
+
+.counting-panel {
+	border-color: rgba(66, 232, 255, 0.54);
+	background:
+		linear-gradient(135deg, rgba(66, 232, 255, 0.13), rgba(255, 209, 91, 0.08) 44%, rgba(12, 22, 24, 0.94)),
+		linear-gradient(145deg, var(--panel), var(--panel-deep));
+}
+
+.counting-system-grid {
+	display: grid;
+	grid-template-columns: minmax(320px, 1.4fr) repeat(2, minmax(220px, 0.8fr));
+	gap: 0.85rem;
+}
+
+.counting-system-card {
+	display: grid;
+	align-content: start;
+	gap: 0.75rem;
+	min-width: 0;
+	padding: 0.9rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 44%),
+		rgba(255, 255, 255, 0.04);
+}
+
+.hi-lo-system-card {
+	border-color: rgba(255, 209, 91, 0.58);
+	background:
+		linear-gradient(135deg, rgba(255, 209, 91, 0.15), rgba(66, 232, 255, 0.1)),
+		rgba(255, 255, 255, 0.04);
+	box-shadow: 0 0 26px rgba(255, 209, 91, 0.1);
+}
+
+.hi-opt-ii-system-card {
+	border-color: rgba(66, 232, 255, 0.38);
+	background:
+		linear-gradient(135deg, rgba(66, 232, 255, 0.1), rgba(255, 255, 255, 0.04)),
+		rgba(255, 255, 255, 0.028);
+}
+
+.wong-halves-system-card {
+	border-color: rgba(107, 140, 255, 0.38);
+	background:
+		linear-gradient(135deg, rgba(107, 140, 255, 0.1), rgba(255, 255, 255, 0.04)),
+		rgba(255, 255, 255, 0.028);
+}
+
+.counting-system-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: start;
+	gap: 0.8rem;
+}
+
+.counting-system-header h3 {
+	margin: 0.16rem 0 0;
+	color: var(--gold);
+	font-size: 1.25rem;
+}
+
+.counting-system-status {
+	display: inline-flex;
+	align-items: center;
+	width: fit-content;
+	padding: 0.32rem 0.55rem;
+	border: 1px solid var(--line-soft);
+	border-radius: 999px;
+	font-size: 0.7rem;
+	font-weight: 900;
+	line-height: 1.2;
+}
+
+.counting-system-status.active {
+	border-color: rgba(73, 226, 139, 0.5);
+	background: rgba(73, 226, 139, 0.12);
+	color: #b9ffd4;
+}
+
+.counting-system-status.neutral {
+	border-color: rgba(255, 184, 77, 0.48);
+	background: rgba(255, 184, 77, 0.12);
+	color: #ffe0ad;
+}
+
+.counting-system-status.favorable {
+	border-color: rgba(73, 226, 139, 0.5);
+	background: rgba(73, 226, 139, 0.12);
+	color: #b9ffd4;
+}
+
+.counting-system-status.unfavorable {
+	border-color: rgba(255, 78, 102, 0.52);
+	background: rgba(255, 78, 102, 0.13);
+	color: #ffc1cb;
+}
+
+.counting-metric-grid,
+.hypothetical-state-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.65rem;
+}
+
+.counting-metric {
+	display: grid;
+	gap: 0.28rem;
+	min-width: 0;
+	padding: 0.75rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 46%),
+		rgba(255, 255, 255, 0.04);
+}
+
+.counting-metric span {
+	color: var(--muted);
+	font-size: 0.72rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.counting-metric strong {
+	color: var(--ink-strong);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+	font-size: 1.42rem;
+	line-height: 1.05;
+	word-break: break-word;
+}
+
+.counting-metric.primary strong {
+	color: var(--gold);
+	font-size: 1.72rem;
+	text-shadow: 0 0 20px rgba(255, 209, 91, 0.2);
+}
+
+.counting-metric.primary:nth-child(2) strong {
+	color: var(--cyan);
+	text-shadow: 0 0 20px rgba(66, 232, 255, 0.2);
+}
+
+.ace-side-count-panel {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 0.55rem;
+	padding: 0.65rem;
+	border: 1px solid rgba(66, 232, 255, 0.28);
+	border-radius: var(--radius);
+	background: rgba(66, 232, 255, 0.08);
+}
+
+.ace-side-count-panel div {
+	display: grid;
+	gap: 0.2rem;
+}
+
+.ace-side-count-panel span,
+.counting-system-note {
+	color: var(--muted);
+	font-size: 0.72rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.ace-side-count-panel strong {
+	color: var(--cyan);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+	font-size: 1.1rem;
+}
+
+.counting-system-note {
+	margin: 0;
+	line-height: 1.35;
+	text-transform: none;
+}
+
+.hypothetical-card,
+.deep-analysis-card {
+	align-content: start;
+}
+
+.hypothetical-state-grid {
+	margin-bottom: 0.75rem;
+}
+
+.hypothetical-state-grid small {
+	color: var(--muted);
+	font-weight: 800;
+}
+
+.deep-analysis-card > .action-button {
+	width: min(100%, 18rem);
+}
+
+.classic-round-section {
+	display: grid;
+	gap: 0.85rem;
+	margin-top: 0.2rem;
+	padding-top: 0.9rem;
+	border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.classic-round-heading {
+	display: grid;
+	gap: 0.28rem;
+	padding: 0.85rem 1rem;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(135deg, rgba(255, 255, 255, 0.055), rgba(255, 209, 91, 0.06)),
+		rgba(0, 0, 0, 0.16);
+}
+
+.classic-round-heading h2,
+.classic-round-heading p {
+	margin: 0;
+}
+
+.classic-round-heading h2 {
+	font-size: 1.1rem;
+}
+
+.classic-round-heading p:last-child {
+	color: var(--muted);
+	font-size: 0.88rem;
+	line-height: 1.45;
+}
+
+.classic-round-grid {
+	display: grid;
+	grid-template-columns: repeat(12, minmax(0, 1fr));
+	gap: 1rem;
 }
 
 .machine-ev-section {
@@ -2082,8 +2339,17 @@ tbody tr:hover {
 	.ranking-card,
 	.risk-card,
 	.metadata-card,
-	.register-card {
+	.register-card,
+	.seen-cards-card,
+	.registration-entry-card,
+	.hypothetical-card,
+	.deep-analysis-card {
 		grid-column: 1 / -1;
+	}
+
+	.counting-system-grid,
+	.classic-round-grid {
+		grid-template-columns: 1fr;
 	}
 }
 
@@ -2161,6 +2427,11 @@ tbody tr:hover {
 	.game-actions-grid,
 	.card-options {
 		grid-template-columns: 1fr 1fr;
+	}
+
+	.counting-metric-grid,
+	.hypothetical-state-grid {
+		grid-template-columns: 1fr;
 	}
 
 	.modal-header,

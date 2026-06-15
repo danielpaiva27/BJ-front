@@ -260,6 +260,84 @@ describe('AppComponent', () => {
     expect('risk_profile' in app.config).toBeFalse();
   });
 
+  it('should initialize counting-first base state without affecting the guided round flow', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    expect(app.inputMode).toBe('seen-card');
+    expect(app.playerHand).toEqual([]);
+    expect(app.countingDashboardState.dealerCards).toEqual([]);
+    expect(app.cardHistory).toEqual([]);
+    expect(app.decisionAnalysis).toBeNull();
+    expect(app.deepAnalysis).toBeNull();
+    expect(app.isDecisionAnalysisStale).toBeFalse();
+    expect(app.isDeepAnalysisStale).toBeFalse();
+    expect(app.tableState.roundPhase).toBe('SETUP');
+  });
+
+  it('should expose counting-first decision helpers for hypothetical hands', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    expect(app.isDecisionHandValid).toBeFalse();
+
+    app.countingDashboardState = {
+      ...app.countingDashboardState,
+      playerHand: ['10'],
+      dealerCards: ['6'],
+    };
+    expect(app.isDecisionHandValid).toBeFalse();
+
+    app.countingDashboardState = {
+      ...app.countingDashboardState,
+      playerHand: ['10', '6'],
+      dealerCards: [],
+    };
+    expect(app.isDecisionHandValid).toBeFalse();
+
+    app.countingDashboardState = {
+      ...app.countingDashboardState,
+      playerHand: ['10', '6'],
+      dealerCards: ['9'],
+    };
+    expect(app.isDecisionHandValid).toBeTrue();
+    expect(app.playerTotal).toBe(16);
+    expect(app.isPlayerBust).toBeFalse();
+    expect(app.dealerUpcard).toBe('9');
+
+    app.countingDashboardState = {
+      ...app.countingDashboardState,
+      playerHand: ['10', '9', '5'],
+      dealerCards: ['6'],
+    };
+    expect(app.isDecisionHandValid).toBeFalse();
+    expect(app.isPlayerBust).toBeTrue();
+  });
+
+  it('should reset hypothetical hand state without clearing current shoe counting', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.tableState = {
+      ...app.tableState,
+      seenCards: ['2', '10'],
+    };
+    app.countingDashboardState = {
+      ...app.countingDashboardState,
+      playerHand: ['10', '6'],
+      dealerCards: ['9'],
+      decisionAnalysis: {} as AnalyzeHandResponse,
+      isDecisionAnalysisStale: true,
+    };
+
+    app.resetHypotheticalHand();
+
+    expect(app.countingDashboardState.playerHand).toEqual([]);
+    expect(app.countingDashboardState.dealerCards).toEqual([]);
+    expect(app.decisionAnalysis).toBeNull();
+    expect(app.isDecisionAnalysisStale).toBeFalse();
+    expect(app.tableState.seenCards).toEqual(['2', '10']);
+  });
+
   it('should render educational awareness screen on first load', () => {
     const fixture = TestBed.createComponent(AppComponent);
     fixture.detectChanges();
@@ -337,9 +415,138 @@ describe('AppComponent', () => {
     fixture.detectChanges();
 
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.textContent).toContain('Use esta etapa para informar cartas');
+    expect(compiled.textContent).toContain('Registro de cartas vistas');
+    expect(compiled.textContent).toContain('Clicar cartas vistas atualiza o shoe');
     expect(compiled.textContent).toContain('Aposta aceita / Iniciar mão');
     expect(app.availableCardTargets).toEqual([]);
+  });
+
+  it('should render the counting-first dashboard before the classic round flow', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const countingPanel = compiled.querySelector('.counting-panel');
+    const classicRoundSection = compiled.querySelector('.classic-round-section');
+
+    expect(countingPanel).not.toBeNull();
+    expect(classicRoundSection).not.toBeNull();
+    const countingElement = countingPanel as HTMLElement;
+    const classicRoundElement = classicRoundSection as HTMLElement;
+    expect(countingElement.textContent).toContain('Contagem em tempo real');
+    expect(countingElement.textContent).toContain('Hi-Lo');
+    expect(countingElement.textContent).toContain('Running Count');
+    expect(countingElement.textContent).toContain('True Count');
+    expect(classicRoundElement.textContent).toContain('Modo clássico de rodada');
+    expect(countingElement.compareDocumentPosition(classicRoundElement) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it('should render live counting cards for Hi-Lo, Hi-Opt II and Wong Halves', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const countingCards = Array.from(compiled.querySelectorAll('.counting-system-card'));
+    const countingText = countingCards.map((item) => item.textContent ?? '').join(' ');
+
+    expect(countingCards.length).toBe(3);
+    expect(countingText).toContain('Hi-Lo');
+    expect(countingText).toContain('Hi-Opt II');
+    expect(countingText).toContain('Wong Halves');
+    expect(countingText).toContain('Running Count');
+    expect(countingText).toContain('True Count');
+    expect(countingText).toContain('Ases vistos');
+    expect(countingText).toContain('Ases restantes');
+    expect(countingText).not.toContain('Placeholder honesto');
+    expect(countingText).not.toContain('Counting UX 3');
+  });
+
+  it('should update all live counting cards from seen-card registration without calling heavy analysis', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    app.enterSeenCardsSetup();
+    app.registerCard('2');
+    app.registerCard('5');
+    app.registerCard('10');
+    app.registerCard('A');
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const hiLoCard = compiled.querySelector('.hi-lo-system-card') as HTMLElement;
+    const hiOptIICard = compiled.querySelector('.hi-opt-ii-system-card') as HTMLElement;
+    const wongHalvesCard = compiled.querySelector('.wong-halves-system-card') as HTMLElement;
+    const getMetricValues = (card: HTMLElement) => Array.from(
+      card.querySelectorAll('.counting-metric strong'),
+    ).map((item) => item.textContent?.trim());
+    const getAceSideCountValues = (card: HTMLElement) => Array.from(
+      card.querySelectorAll('.ace-side-count-panel strong'),
+    ).map((item) => item.textContent?.trim());
+
+    expect(hiLoCard.textContent).toContain('Hi-Lo');
+    expect(getMetricValues(hiLoCard)[0]).toBe('0');
+    expect(hiOptIICard.textContent).toContain('Hi-Opt II');
+    expect(getMetricValues(hiOptIICard)[0]).toBe('1');
+    expect(getAceSideCountValues(hiOptIICard)).toEqual(['1', '23']);
+    expect(wongHalvesCard.textContent).toContain('Wong Halves');
+    expect(getMetricValues(wongHalvesCard)[0]).toBe('0');
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).not.toHaveBeenCalled();
+    expect(blackjackAnalysisServiceSpy.analyzeMachineEvPreRound).not.toHaveBeenCalled();
+  });
+
+  it('should render empty hypothetical hand and keep its decision action disabled', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const hypotheticalCard = compiled.querySelector('.hypothetical-card') as HTMLElement;
+    const analyzeButton = hypotheticalCard.querySelector(
+      'button[aria-label="Analisar decisao hipotetica"]',
+    ) as HTMLButtonElement;
+
+    expect(hypotheticalCard.textContent).toContain('Situação hipotética');
+    expect(hypotheticalCard.textContent).toContain('Jogador');
+    expect(hypotheticalCard.textContent).toContain('Dealer');
+    expect(hypotheticalCard.textContent).toContain('nenhuma carta');
+    expect(analyzeButton.disabled).toBeTrue();
+
+    analyzeButton.click();
+
+    expect(blackjackAnalysisServiceSpy.analyzeHand).not.toHaveBeenCalled();
+  });
+
+  it('should render deep analysis as a disabled placeholder without calling Machine EV', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+
+    app.startShoe();
+    fixture.detectChanges();
+
+    const compiled = fixture.nativeElement as HTMLElement;
+    const deepAnalysisCard = compiled.querySelector('.deep-analysis-card') as HTMLElement;
+    const deepAnalysisButton = deepAnalysisCard.querySelector(
+      'button[aria-label="Executar analise aprofundada"]',
+    ) as HTMLButtonElement;
+
+    expect(deepAnalysisCard.textContent).toContain('Análise aprofundada');
+    expect(deepAnalysisCard.textContent).toContain('Machine EV não roda automaticamente');
+    expect(deepAnalysisButton.disabled).toBeTrue();
+
+    deepAnalysisButton.click();
+
+    expect(blackjackAnalysisServiceSpy.analyzePreRound).not.toHaveBeenCalled();
+    expect(blackjackAnalysisServiceSpy.analyzeMachineEvPreRound).not.toHaveBeenCalled();
   });
 
   it('should show pre-round analysis metrics before starting the hand', () => {

@@ -13,6 +13,13 @@ import {
   GuidedRoundPhase,
 } from './models/blackjack-table.models';
 import {
+  CardHistoryEntry,
+  CountingDashboardState,
+  CountingInputMode,
+  LiveCountingStatus,
+  LiveCountingSystemSummary,
+} from './models/counting-dashboard.models';
+import {
   MachineEvPreRoundRequest,
   MachineEvPreRoundResponse,
   PreRoundAnalysisRequest,
@@ -42,6 +49,15 @@ import {
   transitionGuidedRoundPhase,
   undoLastRegisteredCard,
 } from './utils/blackjack-table.utils';
+import {
+  createInitialCountingDashboardState,
+  getDealerUpcard as getCountingDealerUpcard,
+  getPlayerTotal as getCountingPlayerTotal,
+  isDecisionHandValid as isCountingDecisionHandValid,
+  isPlayerBust as isCountingPlayerBust,
+  resetHypotheticalHandState,
+} from './utils/counting-dashboard-state.utils';
+import { computeLiveCountingSystems } from './utils/card-counting-systems.utils';
 
 interface TableSetupConfig {
   number_of_decks: number;
@@ -166,6 +182,12 @@ export class AppComponent {
     ROUND_ENDED: 'Rodada encerrada',
   };
 
+  readonly liveCountingStatusLabels: Record<LiveCountingStatus, string> = {
+    neutral: 'Neutro',
+    favorable: 'Favorável',
+    unfavorable: 'Desfavorável',
+  };
+
   readonly defaultConfig: TableSetupConfig = {
     number_of_decks: 6,
     dealer_hits_soft_17: false,
@@ -183,6 +205,7 @@ export class AppComponent {
 
   config: TableSetupConfig = { ...this.defaultConfig };
   tableState: BlackjackTableState = createInitialTableState(this.defaultConfig.number_of_decks);
+  countingDashboardState: CountingDashboardState = createInitialCountingDashboardState();
   savedRules: GameRulesRequest | null = null;
   cardRegistrationError = '';
   analysisError = '';
@@ -264,6 +287,54 @@ export class AppComponent {
 
   get liveShoeCounting() {
     return computeLiveShoeCounting(this.tableState);
+  }
+
+  get liveCountingSystems(): LiveCountingSystemSummary[] {
+    return computeLiveCountingSystems(this.tableState);
+  }
+
+  get inputMode(): CountingInputMode {
+    return this.countingDashboardState.inputMode;
+  }
+
+  get playerHand(): CardValue[] {
+    return this.countingDashboardState.playerHand;
+  }
+
+  get cardHistory(): CardHistoryEntry[] {
+    return this.countingDashboardState.cardHistory;
+  }
+
+  get decisionAnalysis(): AnalyzeHandResponse | null {
+    return this.countingDashboardState.decisionAnalysis;
+  }
+
+  get deepAnalysis(): PreRoundAnalysisResponse | null {
+    return this.countingDashboardState.deepAnalysis;
+  }
+
+  get isDecisionAnalysisStale(): boolean {
+    return this.countingDashboardState.isDecisionAnalysisStale;
+  }
+
+  get isDeepAnalysisStale(): boolean {
+    return this.countingDashboardState.isDeepAnalysisStale;
+  }
+
+  get isDecisionHandValid(): boolean {
+    return isCountingDecisionHandValid(this.countingDashboardState);
+  }
+
+  get playerTotal(): number {
+    return getCountingPlayerTotal(this.countingDashboardState);
+  }
+
+  get isPlayerBust(): boolean {
+    return isCountingPlayerBust(this.countingDashboardState);
+  }
+
+  get dealerUpcard(): CardValue | null {
+    return getCountingDealerUpcard(this.countingDashboardState);
   }
 
   get registeredCardsCount(): number {
@@ -1204,6 +1275,10 @@ export class AppComponent {
     this.cardRegistrationFeedback = result.ok ? 'Última carta desfeita.' : '';
     this.recentRegisteredCardValue = null;
     this.analysisError = '';
+  }
+
+  resetHypotheticalHand(): void {
+    this.countingDashboardState = resetHypotheticalHandState(this.countingDashboardState);
   }
 
   resetCurrentRound(): void {

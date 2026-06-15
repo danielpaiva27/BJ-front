@@ -196,7 +196,7 @@
       <section class="section-card shoe-state-card">
         <div class="section-heading">
           <h2>Estado do shoe <app-info-tooltip termKey="shoe" /></h2>
-          <p>{{ phaseSummaryLabel }}</p>
+          <p>{{ phaseSummaryLabel }}. Contagem primeiro. Decisao depois. Analise pesada sob demanda.</p>
         </div>
 
         <div class="stat-grid">
@@ -238,10 +238,71 @@
         </div>
       </section>
 
+      <section class="section-card counting-panel" aria-labelledby="counting-panel-title">
+        <div class="section-heading">
+          <p class="section-kicker">Painel principal</p>
+          <h2 id="counting-panel-title">Contagem em tempo real</h2>
+          <p>Registre cartas vistas para atualizar o shoe. Machine EV e comparacoes pesadas ficam sob demanda.</p>
+        </div>
+
+        <div class="counting-system-grid">
+          <article
+            class="counting-system-card"
+            *ngFor="let system of liveCountingSystems"
+            [class.hi-lo-system-card]="system.system === 'hi-lo'"
+            [class.hi-opt-ii-system-card]="system.system === 'hi-opt-ii'"
+            [class.wong-halves-system-card]="system.system === 'wong-halves'"
+          >
+            <div class="counting-system-header">
+              <div>
+                <span class="counting-system-kicker">Contagem em tempo real</span>
+                <h3>{{ system.label }}</h3>
+              </div>
+              <span class="counting-system-status" [ngClass]="system.status">
+                {{ liveCountingStatusLabels[system.status] }}
+              </span>
+            </div>
+
+            <div class="counting-metric-grid">
+              <div class="counting-metric primary">
+                <span>Running Count</span>
+                <strong>{{ system.runningCount | number: '1.0-2' }}</strong>
+              </div>
+              <div class="counting-metric primary">
+                <span>True Count</span>
+                <strong>{{ system.trueCount === null ? '-' : (system.trueCount | number: '1.2-2') }}</strong>
+              </div>
+              <div class="counting-metric">
+                <span>Cartas restantes</span>
+                <strong>{{ system.cardsRemaining }}</strong>
+              </div>
+              <div class="counting-metric">
+                <span>Decks restantes</span>
+                <strong>{{ system.decksRemaining | number: '1.2-2' }}</strong>
+              </div>
+            </div>
+
+            <div class="ace-side-count-panel" *ngIf="system.aceSideCount as aceSideCount">
+              <div>
+                <span>Ases vistos</span>
+                <strong>{{ aceSideCount.seenAces }}</strong>
+              </div>
+              <div>
+                <span>Ases restantes</span>
+                <strong>{{ aceSideCount.remainingAces }}</strong>
+              </div>
+            </div>
+
+            <p class="counting-system-note" *ngFor="let note of system.notes">{{ note }}</p>
+          </article>
+        </div>
+      </section>
+
       <section class="section-card register-card seen-cards-card" *ngIf="showSeenCardsDefinitionCard">
         <div class="section-heading">
-          <h2>Definir cartas já vistas</h2>
-          <p>Use esta etapa para informar cartas que já saíram neste shoe antes ou durante a rodada atual.</p>
+          <p class="section-kicker">Acao central</p>
+          <h2>Registro de cartas vistas</h2>
+          <p>Clicar cartas vistas atualiza o shoe e a contagem em tempo real.</p>
         </div>
 
         <div class="stat-item seen-card-summary">
@@ -256,25 +317,6 @@
           </div>
         </div>
 
-        <div class="stat-grid live-counting-panel" *ngIf="liveShoeCounting as liveCount">
-          <div class="stat-item">
-            <span>Running Count</span>
-            <strong>{{ liveCount.running_count }}</strong>
-          </div>
-          <div class="stat-item">
-            <span>True Count</span>
-            <strong>{{ liveCount.true_count | number: '1.2-4' }}</strong>
-          </div>
-          <div class="stat-item">
-            <span>Cartas restantes</span>
-            <strong>{{ liveCount.cards_remaining }}</strong>
-          </div>
-          <div class="stat-item">
-            <span>Decks restantes</span>
-            <strong>{{ liveCount.decks_remaining | number: '1.2-4' }}</strong>
-          </div>
-        </div>
-
         <p class="theoretical-note" *ngIf="preRoundAnalysisNeedsRefresh && currentRoundPhase === 'SEEN_CARDS_SETUP'">
           Cartas vistas, banca ou regras mudaram desde a última análise pré-rodada. Clique em Analisar pré-rodada para atualizar.
         </p>
@@ -285,6 +327,110 @@
         </div>
       </section>
 
+      <section class="section-card register-card registration-entry-card" *ngIf="availableCardTargets.length > 0">
+        <div class="section-heading">
+          <h2>{{ registerPanelTitle }}</h2>
+          <p>{{ registerPanelDescription }}</p>
+          <p>Destino selecionado: <strong class="selected-destination">{{ getCardTargetLabel(tableState.selectedTarget) }}</strong></p>
+        </div>
+
+        <div class="target-panel" role="group" aria-label="Selecionar destino da carta">
+          <button
+            type="button"
+            class="target-button"
+            *ngFor="let target of availableCardTargets"
+            [class.active]="tableState.selectedTarget === target"
+            (click)="selectTarget(target)"
+          >
+            {{ getCardTargetLabel(target) }}
+          </button>
+        </div>
+
+        <div class="game-actions-grid">
+          <button
+            type="button"
+            class="action-button"
+            [disabled]="!canRegisterCardsInCurrentPhase"
+            (click)="openCardSelectionModal()"
+          >
+            {{ currentCardRequestButtonLabel }}
+          </button>
+        </div>
+
+        <p class="theoretical-note" *ngIf="recentRegisteredCardValue">
+          Ultima carta registrada: <strong>{{ getCardPrimaryDisplay(recentRegisteredCardValue) }}</strong>
+        </p>
+
+        <p class="registration-feedback" *ngIf="cardRegistrationFeedback">{{ cardRegistrationFeedback }}</p>
+        <p class="error" *ngIf="cardRegistrationError">{{ cardRegistrationError }}</p>
+      </section>
+
+      <section class="section-card hypothetical-card" aria-labelledby="hypothetical-title">
+        <div class="section-heading">
+          <p class="section-kicker">Opcional</p>
+          <h2 id="hypothetical-title">Situação hipotética</h2>
+          <p>Mão separada da contagem geral, preparada para análise de decisão sob demanda.</p>
+        </div>
+
+        <div class="hypothetical-state-grid">
+          <div class="stat-item">
+            <span>Jogador</span>
+            <strong>{{ playerHand.length > 0 ? playerHand.join(', ') : 'nenhuma carta' }}</strong>
+            <small *ngIf="playerHand.length > 0">Total: {{ playerTotal }}{{ isPlayerBust ? ' - bust' : '' }}</small>
+          </div>
+          <div class="stat-item">
+            <span>Dealer</span>
+            <strong>{{ countingDashboardState.dealerCards.length > 0 ? countingDashboardState.dealerCards.join(', ') : 'nenhuma carta' }}</strong>
+            <small *ngIf="dealerUpcard">Upcard: {{ dealerUpcard }}</small>
+          </div>
+        </div>
+
+        <div class="game-actions-grid">
+          <button type="button" class="control-button" (click)="resetHypotheticalHand()">Limpar mãos</button>
+          <button
+            type="button"
+            class="action-button"
+            aria-label="Analisar decisao hipotetica"
+            disabled
+          >
+            Analisar decisão
+          </button>
+        </div>
+
+        <p class="theoretical-note">
+          A análise de decisão só será conectada quando houver mão hipotética válida.
+        </p>
+      </section>
+
+      <section class="section-card deep-analysis-card" aria-labelledby="deep-analysis-title">
+        <div class="section-heading">
+          <p class="section-kicker">Sob demanda</p>
+          <h2 id="deep-analysis-title">Análise aprofundada</h2>
+          <p>Compare Hi-Lo, Hi-Opt II, Wong Halves e Machine EV quando você pedir.</p>
+        </div>
+
+        <button
+          type="button"
+          class="action-button"
+          aria-label="Executar analise aprofundada"
+          disabled
+        >
+          Análise aprofundada
+        </button>
+
+        <p class="theoretical-note">
+          Placeholder visual: Machine EV não roda automaticamente nesta área.
+        </p>
+      </section>
+
+      <section class="classic-round-section" aria-labelledby="classic-round-title">
+        <div class="classic-round-heading">
+          <p class="section-kicker">Secundário</p>
+          <h2 id="classic-round-title">Modo clássico de rodada</h2>
+          <p>Fluxo antigo preservado para compatibilidade enquanto a experiência counting-first evolui.</p>
+        </div>
+
+        <div class="classic-round-grid">
       <section class="section-card register-card pre-round-card" *ngIf="showStartHandCard">
         <div class="section-heading">
           <h2>Iniciar mão</h2>
@@ -524,44 +670,6 @@
         <div class="game-actions-grid">
           <button type="button" class="action-button" *ngIf="showConfirmBettingDecision" (click)="confirmBettingDecision()">Aposta aceita / Iniciar mão</button>
         </div>
-      </section>
-
-      <section class="section-card register-card" *ngIf="availableCardTargets.length > 0">
-        <div class="section-heading">
-          <h2>{{ registerPanelTitle }}</h2>
-          <p>{{ registerPanelDescription }}</p>
-          <p>Destino selecionado: <strong class="selected-destination">{{ getCardTargetLabel(tableState.selectedTarget) }}</strong></p>
-        </div>
-
-        <div class="target-panel" role="group" aria-label="Selecionar destino da carta">
-          <button
-            type="button"
-            class="target-button"
-            *ngFor="let target of availableCardTargets"
-            [class.active]="tableState.selectedTarget === target"
-            (click)="selectTarget(target)"
-          >
-            {{ getCardTargetLabel(target) }}
-          </button>
-        </div>
-
-        <div class="game-actions-grid">
-          <button
-            type="button"
-            class="action-button"
-            [disabled]="!canRegisterCardsInCurrentPhase"
-            (click)="openCardSelectionModal()"
-          >
-            {{ currentCardRequestButtonLabel }}
-          </button>
-        </div>
-
-        <p class="theoretical-note" *ngIf="recentRegisteredCardValue">
-          Ultima carta registrada: <strong>{{ getCardPrimaryDisplay(recentRegisteredCardValue) }}</strong>
-        </p>
-
-        <p class="registration-feedback" *ngIf="cardRegistrationFeedback">{{ cardRegistrationFeedback }}</p>
-        <p class="error" *ngIf="cardRegistrationError">{{ cardRegistrationError }}</p>
       </section>
 
       <section class="section-card table-card">
@@ -892,6 +1000,8 @@
           <summary>Resposta completa da API (JSON)</summary>
           <pre>{{ response | json }}</pre>
         </details>
+      </section>
+        </div>
       </section>
     </section>
   </ng-template>
