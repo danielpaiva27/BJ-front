@@ -55,6 +55,47 @@
 - Machine EV nao roda automaticamente.
 - Analise aprofundada continua preparada como placeholder para etapa futura.
 
+## Etapa 4 - modos de entrada de cartas
+
+- Modos Carta vista, Jogador e Dealer foram ativados no registro de cartas da area counting.
+- Carta registrada em Jogador/Dealer tambem entra na contagem geral do shoe.
+- Situacao hipotetica agora reflete cartas reais de jogador e dealer com total, bust e upcard.
+- Limpar maos limpa somente a mao hipotetica e nao desfaz contagem/seen cards.
+- Analise de decisao real continua reservada para etapa futura.
+
+## Etapa 5 - desfazer e robustez da mao hipotetica
+
+- Desfazer ultima carta foi adicionado no painel de contagem com rollback em contagem, shoe e historico.
+- Historico visual simples de ultimas cartas foi incluido com destino claro (Carta vista, Jogador, Dealer).
+- Limpar maos segue separado de desfazer contagem: limpa apenas a situacao hipotetica.
+- Situacao hipotetica ganhou status explicito (incompleta, pronta, estourada), tipo de mao (hard/soft) e mensagens de bloqueio.
+- Analise de decisao real continua para etapa futura.
+
+## Etapa 6 - analise de decisao sob demanda na mao hipotetica
+
+- O botao Analisar decisao da area hipotetica agora chama /analyze-hand reutilizando o servico e contrato ja existentes.
+- O payload usa player_hand e dealer_upcard da mao hipotetica e seen_cards da contagem atual do shoe, sem mudancas de backend.
+- A area hipotetica ganhou estados proprios de loading, erro e resultado, sem interferir no fluxo classico de analise da rodada.
+- O resultado exibe acao recomendada, EV/confianca e ranking de acoes para a mao hipotetica.
+- Mudancas nas cartas de jogador/dealer limpam o resultado; novas cartas vistas mantem o resultado e marcam como desatualizado ate nova analise.
+
+## Etapa 7 - analise aprofundada dos metodos sob demanda
+
+- A seção Análise aprofundada foi ativada para chamada sob demanda dos métodos humanos (Hi-Lo, Hi-Opt II, Wong Halves) e da Machine EV.
+- Machine EV continua estritamente sob demanda: não roda automaticamente a cada carta, desfazer ou limpar mãos.
+- Resultados exibem apenas campos públicos (edge, status, risco da aposta mínima, banca necessária e warnings quando disponíveis).
+- Resultados ficam desatualizados (stale) quando shoe/config/regras mudam após a última execução.
+- Métricas de debug e qualquer sugestão de aposta/unidades não são exibidas nesta área.
+
+## Estado final da Counting UX
+
+- A experiência principal da tela é counting-first, com contagens em tempo real e registro rápido de cartas vistas.
+- A mão hipotética é opcional e permite análise de decisão somente sob demanda, sem acionar análises pesadas automaticamente.
+- A análise aprofundada compara métodos humanos e Machine EV apenas quando solicitada, com resultados públicos e sem campos internos.
+- Estados de desatualização (stale), loading e erro ficam isolados por contexto para evitar mistura entre fluxos.
+- O fluxo clássico de rodada permanece disponível como compatibilidade, explícito como secundário.
+- Microcopy e controles principais foram polidos para reforçar clareza acadêmica/simulacional e acessibilidade básica.
+
 ## Proximas etapas
 
 1. Counting UX 1 - Diagnostico e estado base

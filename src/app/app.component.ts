@@ -4,7 +4,12 @@ import { Component, HostListener } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { finalize } from 'rxjs/operators';
 
-import { ActionAnalysis, AnalyzeHandResponse, GameRulesRequest } from './models/blackjack-analysis.models';
+import {
+  ActionAnalysis,
+  AnalyzeHandRequest,
+  AnalyzeHandResponse,
+  GameRulesRequest,
+} from './models/blackjack-analysis.models';
 import {
   BlackjackTableState,
   CardTarget,
@@ -47,6 +52,7 @@ import {
   shouldDealerHit,
   startNewRoundKeepingShoe,
   transitionGuidedRoundPhase,
+  undoLastSeenCardRegistration,
   undoLastRegisteredCard,
 } from './utils/blackjack-table.utils';
 import {
@@ -55,7 +61,10 @@ import {
   getPlayerTotal as getCountingPlayerTotal,
   isDecisionHandValid as isCountingDecisionHandValid,
   isPlayerBust as isCountingPlayerBust,
+  registerCountingCard,
   resetHypotheticalHandState,
+  setCountingInputMode,
+  undoLastCountingCard,
 } from './utils/counting-dashboard-state.utils';
 import { computeLiveCountingSystems } from './utils/card-counting-systems.utils';
 
@@ -188,6 +197,13 @@ export class AppComponent {
     unfavorable: 'Desfavorável',
   };
 
+  readonly countingInputModes: CountingInputMode[] = ['seen-card', 'player', 'dealer'];
+  readonly countingInputModeLabels: Record<CountingInputMode, string> = {
+    'seen-card': 'Carta vista',
+    player: 'Jogador',
+    dealer: 'Dealer',
+  };
+
   readonly defaultConfig: TableSetupConfig = {
     number_of_decks: 6,
     dealer_hits_soft_17: false,
@@ -211,6 +227,15 @@ export class AppComponent {
   analysisError = '';
   analysisLoading = false;
   analysisResponse: AnalyzeHandResponse | null = null;
+  isDecisionAnalysisLoading = false;
+  decisionAnalysisError = '';
+  deepAnalysisMachineEv: MachineEvPreRoundResponse | null = null;
+  isDeepAnalysisLoading = false;
+  isHumanDeepAnalysisLoading = false;
+  isMachineEvDeepAnalysisLoading = false;
+  deepAnalysisError: string | null = null;
+  humanDeepAnalysisError: string | null = null;
+  machineEvDeepAnalysisError: string | null = null;
   latestBettingData: AnalyzeHandResponse['betting'] | null = null;
   isPreRoundAnalysisLoading = false;
   preRoundAnalysisError: string | null = null;
@@ -241,6 +266,10 @@ export class AppComponent {
   currentRoundPreBetAnalysis: RoundPreBetAnalysisSnapshot | null = null;
   private preRoundAnalysisSignature = '';
   private machineEvAnalysisSignature = '';
+  private deepAnalysisHumanSignature = '';
+  private deepAnalysisMachineSignature = '';
+  private deepAnalysisRequestGeneration = 0;
+  private hypotheticalDecisionRequestGeneration = 0;
   private preRoundRequestGeneration = 0;
   private seenCardsReturnPhase: GuidedRoundPhase | null = null;
   private seenCardsReturnTarget: CardTarget | null = null;
@@ -301,8 +330,21 @@ export class AppComponent {
     return this.countingDashboardState.playerHand;
   }
 
+  get hypotheticalDealerCards(): CardValue[] {
+    return this.countingDashboardState.dealerCards;
+  }
+
   get cardHistory(): CardHistoryEntry[] {
     return this.countingDashboardState.cardHistory;
+  }
+
+  get recentCountingCardHistory(): CardHistoryEntry[] {
+    const maxEntries = 8;
+    return this.cardHistory.slice(-maxEntries).reverse();
+  }
+
+  get lastCountingCardEntry(): CardHistoryEntry | null {
+    return this.cardHistory[this.cardHistory.length - 1] ?? null;
   }
 
   get decisionAnalysis(): AnalyzeHandResponse | null {
@@ -313,12 +355,34 @@ export class AppComponent {
     return this.countingDashboardState.deepAnalysis;
   }
 
+  get deepAnalysisHumanNeedsRefresh(): boolean {
+    return Boolean(
+      this.deepAnalysis
+      && this.deepAnalysisHumanSignature !== this.buildPreRoundSnapshot().signature,
+    );
+  }
+
+  get deepAnalysisMachineNeedsRefresh(): boolean {
+    return Boolean(
+      this.deepAnalysisMachineEv
+      && this.deepAnalysisMachineSignature !== this.buildPreRoundSnapshot().signature,
+    );
+  }
+
   get isDecisionAnalysisStale(): boolean {
     return this.countingDashboardState.isDecisionAnalysisStale;
   }
 
   get isDeepAnalysisStale(): boolean {
-    return this.countingDashboardState.isDeepAnalysisStale;
+    return (
+      this.countingDashboardState.isDeepAnalysisStale
+      || this.deepAnalysisHumanNeedsRefresh
+      || this.deepAnalysisMachineNeedsRefresh
+    );
+  }
+
+  get hasDeepAnalysisResults(): boolean {
+    return Boolean(this.deepAnalysis || this.deepAnalysisMachineEv);
   }
 
   get isDecisionHandValid(): boolean {
@@ -335,6 +399,135 @@ export class AppComponent {
 
   get dealerUpcard(): CardValue | null {
     return getCountingDealerUpcard(this.countingDashboardState);
+  }
+
+  get hypotheticalPlayerHandTypeLabel(): string {
+    if (this.playerHand.length === 0) {
+      return 'sem cartas';
+    }
+
+    return evaluatePlayerHand(this.playerHand).isSoft ? 'soft' : 'hard';
+  }
+
+  get hypotheticalHandStatus(): 'incomplete' | 'ready' | 'bust' {
+    if (this.isPlayerBust) {
+      return 'bust';
+    }
+
+    if (this.isDecisionHandValid) {
+      return 'ready';
+    }
+
+    return 'incomplete';
+  }
+
+  get hypotheticalHandStatusLabel(): string {
+    if (this.hypotheticalHandStatus === 'bust') {
+      return 'Estourada';
+    }
+
+    if (this.hypotheticalHandStatus === 'ready') {
+      return 'Pronta para análise';
+    }
+
+    return 'Incompleta';
+  }
+
+  get canAnalyzeHypotheticalDecision(): boolean {
+    return this.isDecisionHandValid;
+  }
+
+  get hypotheticalDecisionDisabledReason(): string {
+    if (this.playerHand.length < 2) {
+      return 'Adicione pelo menos 2 cartas ao jogador.';
+    }
+
+    if (!this.dealerUpcard) {
+      return 'Adicione uma carta aberta do dealer.';
+    }
+
+    if (this.isPlayerBust) {
+      return 'Jogador estourou. Análise de decisão indisponível.';
+    }
+
+    return '';
+  }
+
+  get hypotheticalDecisionReadinessText(): string {
+    if (this.hypotheticalDecisionDisabledReason) {
+      return this.hypotheticalDecisionDisabledReason;
+    }
+
+    if (this.isDecisionAnalysisLoading) {
+      return 'Processando análise da mão hipotética...';
+    }
+
+    if (this.decisionAnalysis && this.isDecisionAnalysisStale) {
+      return 'Cartas vistas mudaram desde a última análise. Reanalise para atualizar a recomendação.';
+    }
+
+    return 'Mão pronta para análise sob demanda.';
+  }
+
+  get canUndoLastCountingCard(): boolean {
+    return this.cardHistory.length > 0;
+  }
+
+  get undoLastCountingCardTitle(): string {
+    return this.canUndoLastCountingCard
+      ? 'Desfaz a última carta registrada na contagem.'
+      : 'Sem histórico de contagem para desfazer.';
+  }
+
+  get lastCountingCardSummary(): string {
+    const lastEntry = this.lastCountingCardEntry;
+
+    if (!lastEntry) {
+      return 'Nenhuma carta registrada no histórico de contagem.';
+    }
+
+    return `Última carta: ${lastEntry.value} registrada em ${this.getCardHistoryDestinationLabel(lastEntry)}.`;
+  }
+
+  get countingInputModeHint(): string {
+    if (this.inputMode === 'player') {
+      return 'Carta registrada entra na contagem geral e também na mão hipotética do jogador.';
+    }
+
+    if (this.inputMode === 'dealer') {
+      return 'Carta registrada entra na contagem geral e também nas cartas hipotéticas do dealer.';
+    }
+
+    return 'Carta registrada entra apenas na contagem geral do shoe.';
+  }
+
+  get hypotheticalDecisionActionTitle(): string {
+    if (this.isDecisionAnalysisLoading) {
+      return 'Análise da situação hipotética em andamento.';
+    }
+
+    if (!this.canAnalyzeHypotheticalDecision) {
+      return this.hypotheticalDecisionDisabledReason;
+    }
+
+    return 'Executar análise probabilística da situação hipotética.';
+  }
+
+  get deepAnalysisActionTitle(): string {
+    if (this.isDeepAnalysisLoading) {
+      return 'Análise aprofundada em andamento.';
+    }
+
+    return 'Executar comparação sob demanda entre Hi-Lo, Hi-Opt II, Wong Halves e Machine EV.';
+  }
+
+  getCountingInputModeButtonTitle(mode: CountingInputMode): string {
+    const modeLabel = this.countingInputModeLabels[mode];
+    if (this.inputMode === mode) {
+      return `${modeLabel} já está ativo.`;
+    }
+
+    return `Selecionar modo ${modeLabel}.`;
   }
 
   get registeredCardsCount(): number {
@@ -889,8 +1082,7 @@ export class AppComponent {
   }
 
   get canUndoLastSeenCardInModal(): boolean {
-    const lastEntry = this.tableState.history[this.tableState.history.length - 1];
-    return this.isSeenCardsContinuousModal && lastEntry?.target === 'seen';
+    return this.isSeenCardsContinuousModal && this.canUndoLastCountingCard;
   }
 
   @HostListener('window:keydown', ['$event'])
@@ -1118,6 +1310,7 @@ export class AppComponent {
       gamePhase: 'shoe_active',
       roundPhase: transitionGuidedRoundPhase(initializedState.roundPhase, 'START_SHOE'),
     };
+    this.markDeepAnalysisAsStale();
     this.cardRegistrationError = '';
     this.cardRegistrationFeedback = '';
     this.analysisError = '';
@@ -1146,6 +1339,8 @@ export class AppComponent {
     this.machineEvAnalysisSignature = '';
     this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
+    this.clearHypotheticalDecisionUiFeedback();
+    this.clearDeepAnalysisUiFeedback();
   }
 
   continueFromAwareness(): void {
@@ -1199,6 +1394,161 @@ export class AppComponent {
     this.cardModalOpen = false;
   }
 
+  selectCountingInputMode(mode: CountingInputMode): void {
+    this.countingDashboardState = setCountingInputMode(this.countingDashboardState, mode);
+  }
+
+  onAnalyzeHypotheticalDecision(): void {
+    if (this.isDecisionAnalysisLoading) {
+      return;
+    }
+
+    if (!this.canAnalyzeHypotheticalDecision) {
+      this.decisionAnalysisError = this.hypotheticalDecisionDisabledReason
+        || 'Análise indisponível: complete a mão hipotética antes de analisar.';
+      return;
+    }
+
+    const payload = this.buildHypotheticalAnalyzeHandRequest();
+    if (!payload) {
+      this.decisionAnalysisError =
+        'Dados insuficientes: informe ao menos 2 cartas do jogador e 1 carta aberta do dealer.';
+      return;
+    }
+
+    const requestGeneration = this.hypotheticalDecisionRequestGeneration + 1;
+    this.hypotheticalDecisionRequestGeneration = requestGeneration;
+    const requestSignature = this.buildHypotheticalDecisionSnapshotSignature();
+
+    this.isDecisionAnalysisLoading = true;
+    this.decisionAnalysisError = '';
+    this.blackjackAnalysisService
+      .analyzeHand(payload)
+      .pipe(finalize(() => {
+        if (requestGeneration === this.hypotheticalDecisionRequestGeneration) {
+          this.isDecisionAnalysisLoading = false;
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          if (!this.isCurrentHypotheticalDecisionSnapshot(requestGeneration, requestSignature)) {
+            return;
+          }
+
+          this.countingDashboardState = {
+            ...this.countingDashboardState,
+            decisionAnalysis: response,
+            isDecisionAnalysisStale: false,
+          };
+          this.decisionAnalysisError = '';
+        },
+        error: (error: unknown) => {
+          if (!this.isCurrentHypotheticalDecisionSnapshot(requestGeneration, requestSignature)) {
+            return;
+          }
+
+          this.decisionAnalysisError = this.resolveAnalysisErrorMessage(error);
+          console.error('Erro ao processar analise da mao hipotetica:', error);
+        },
+      });
+  }
+
+  onRunDeepAnalysis(): void {
+    if (this.isDeepAnalysisLoading) {
+      return;
+    }
+
+    const snapshot = this.buildPreRoundSnapshot();
+    const requestGeneration = ++this.deepAnalysisRequestGeneration;
+
+    this.isHumanDeepAnalysisLoading = true;
+    this.isMachineEvDeepAnalysisLoading = true;
+    this.updateDeepAnalysisLoadingState();
+    this.deepAnalysisError = null;
+    this.humanDeepAnalysisError = null;
+    this.machineEvDeepAnalysisError = null;
+
+    this.blackjackAnalysisService
+      .analyzePreRound(snapshot.humanRequest)
+      .pipe(finalize(() => {
+        if (requestGeneration === this.deepAnalysisRequestGeneration) {
+          this.isHumanDeepAnalysisLoading = false;
+          this.updateDeepAnalysisLoadingState();
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          if (!this.isCurrentDeepAnalysisSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
+
+          this.countingDashboardState = {
+            ...this.countingDashboardState,
+            deepAnalysis: response,
+            isDeepAnalysisStale: false,
+          };
+          this.deepAnalysisHumanSignature = snapshot.signature;
+          this.humanDeepAnalysisError = null;
+          this.syncDeepAnalysisErrorState();
+        },
+        error: (error: unknown) => {
+          if (!this.isCurrentDeepAnalysisSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
+
+          this.humanDeepAnalysisError = this.resolvePreRoundAnalysisErrorMessage(error);
+          this.syncDeepAnalysisErrorState();
+          console.error('Erro ao processar analise aprofundada dos metodos humanos:', error);
+        },
+      });
+
+    this.blackjackAnalysisService
+      .analyzeMachineEvPreRound(snapshot.machineEvRequest)
+      .pipe(finalize(() => {
+        if (requestGeneration === this.deepAnalysisRequestGeneration) {
+          this.isMachineEvDeepAnalysisLoading = false;
+          this.updateDeepAnalysisLoadingState();
+        }
+      }))
+      .subscribe({
+        next: (response) => {
+          if (!this.isCurrentDeepAnalysisSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
+
+          this.deepAnalysisMachineEv = response;
+          this.deepAnalysisMachineSignature = snapshot.signature;
+          this.machineEvDeepAnalysisError = null;
+          this.countingDashboardState = {
+            ...this.countingDashboardState,
+            isDeepAnalysisStale: false,
+          };
+          this.syncDeepAnalysisErrorState();
+        },
+        error: (error: unknown) => {
+          if (!this.isCurrentDeepAnalysisSnapshot(requestGeneration, snapshot.signature)) {
+            return;
+          }
+
+          this.machineEvDeepAnalysisError = this.resolveMachineEvErrorMessage(error);
+          this.syncDeepAnalysisErrorState();
+          console.error('Erro ao processar Machine EV na analise aprofundada:', error);
+        },
+      });
+  }
+
+  getCardHistoryDestinationLabel(entry: CardHistoryEntry): string {
+    if (entry.destination === 'player') {
+      return 'Jogador';
+    }
+
+    if (entry.destination === 'dealer') {
+      return 'Dealer';
+    }
+
+    return 'Carta vista';
+  }
+
   handleModalCardSelected(value: CardValue): void {
     if (this.isSeenCardsContinuousModal) {
       this.registerCard(value);
@@ -1221,11 +1571,47 @@ export class AppComponent {
       return;
     }
 
-    this.undoLastCard();
+    this.undoLastCountingCardRegistration();
+  }
+
+  undoLastCountingCardRegistration(): void {
+    const lastEntry = this.lastCountingCardEntry;
+
+    if (!lastEntry) {
+      this.cardRegistrationError = 'Nao ha carta registrada no historico de contagem para desfazer.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
+    const undoneTableState = undoLastSeenCardRegistration(this.tableState, lastEntry.value);
+    if (!undoneTableState.ok) {
+      this.cardRegistrationError = undoneTableState.error ?? 'Falha ao desfazer carta de contagem.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
+    const undoneCountingState = undoLastCountingCard(this.countingDashboardState);
+    if (!undoneCountingState.ok) {
+      this.cardRegistrationError = undoneCountingState.error ?? 'Falha ao atualizar historico de contagem.';
+      this.cardRegistrationFeedback = '';
+      return;
+    }
+
+    this.tableState = undoneTableState.state;
+    this.countingDashboardState = undoneCountingState.state;
+    this.markDeepAnalysisAsStale();
+    this.clearHypotheticalDecisionUiFeedback();
+    this.cardRegistrationError = '';
+    this.cardRegistrationFeedback = `Última carta desfeita: ${lastEntry.value} em ${this.getCardHistoryDestinationLabel(lastEntry)}.`;
+    this.recentRegisteredCardValue = null;
+    this.analysisError = '';
+    this.analysisResponse = null;
   }
 
   registerCard(value: CardValue): boolean {
     const registrationAction = this.getRegistrationActionForCurrentTarget();
+    const selectedTarget = this.tableState.selectedTarget;
+    const shouldApplyCountingInputMode = selectedTarget === 'seen';
 
     if (!registrationAction) {
       this.cardRegistrationError = 'Registro de carta indisponivel na fase atual da rodada.';
@@ -1239,17 +1625,22 @@ export class AppComponent {
       return false;
     }
 
-    const result = registerCardAction(this.tableState, value, this.tableState.selectedTarget);
+    const result = registerCardAction(this.tableState, value, selectedTarget);
     this.tableState = result.state;
     this.cardRegistrationError = result.ok ? '' : result.error ?? 'Falha ao registrar carta.';
     this.cardRegistrationFeedback = result.ok
-      ? `${this.getCardPrimaryDisplay(value)} registrada em ${this.getCardTargetLabel(this.tableState.selectedTarget)}.`
+      ? `${this.getCardPrimaryDisplay(value)} registrada em ${this.getCardTargetLabel(selectedTarget)}.`
       : '';
     this.recentRegisteredCardValue = result.ok ? value : null;
     this.analysisError = '';
     this.analysisResponse = result.ok ? null : this.analysisResponse;
 
     if (result.ok) {
+      if (shouldApplyCountingInputMode) {
+        this.countingDashboardState = registerCountingCard(this.countingDashboardState, value);
+        this.clearHypotheticalDecisionUiFeedback();
+      }
+      this.markDeepAnalysisAsStale();
       this.applyPostRegistrationTransition(registrationAction);
     }
 
@@ -1275,10 +1666,15 @@ export class AppComponent {
     this.cardRegistrationFeedback = result.ok ? 'Última carta desfeita.' : '';
     this.recentRegisteredCardValue = null;
     this.analysisError = '';
+
+    if (result.ok) {
+      this.markDeepAnalysisAsStale();
+    }
   }
 
   resetHypotheticalHand(): void {
     this.countingDashboardState = resetHypotheticalHandState(this.countingDashboardState);
+    this.clearHypotheticalDecisionUiFeedback();
   }
 
   resetCurrentRound(): void {
@@ -1316,6 +1712,9 @@ export class AppComponent {
     this.machineEvAnalysisSignature = '';
     this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
+    this.clearHypotheticalDecisionUiFeedback();
+    this.markDeepAnalysisAsStale();
+    this.clearDeepAnalysisUiFeedback();
   }
 
   resetCurrentShoe(): void {
@@ -1361,6 +1760,9 @@ export class AppComponent {
     this.machineEvAnalysisSignature = '';
     this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
+    this.clearHypotheticalDecisionUiFeedback();
+    this.markDeepAnalysisAsStale();
+    this.clearDeepAnalysisUiFeedback();
   }
 
   startNextRound(): void {
@@ -1397,6 +1799,9 @@ export class AppComponent {
     this.machineEvAnalysisSignature = '';
     this.clearSeenCardsSetupReturnState();
     this.closeCardSelectionModal();
+    this.clearHypotheticalDecisionUiFeedback();
+    this.markDeepAnalysisAsStale();
+    this.clearDeepAnalysisUiFeedback();
   }
 
   onHit(): void {
@@ -2508,6 +2913,103 @@ export class AppComponent {
     return 'Ocorreu um erro ao processar a análise.';
   }
 
+  private clearHypotheticalDecisionUiFeedback(): void {
+    this.hypotheticalDecisionRequestGeneration += 1;
+    this.isDecisionAnalysisLoading = false;
+    this.decisionAnalysisError = '';
+  }
+
+  private markDeepAnalysisAsStale(): void {
+    if (!this.deepAnalysis && !this.deepAnalysisMachineEv) {
+      return;
+    }
+
+    this.countingDashboardState = {
+      ...this.countingDashboardState,
+      isDeepAnalysisStale: true,
+    };
+  }
+
+  private clearDeepAnalysisUiFeedback(): void {
+    this.deepAnalysisRequestGeneration += 1;
+    this.isHumanDeepAnalysisLoading = false;
+    this.isMachineEvDeepAnalysisLoading = false;
+    this.updateDeepAnalysisLoadingState();
+    this.deepAnalysisError = null;
+    this.humanDeepAnalysisError = null;
+    this.machineEvDeepAnalysisError = null;
+  }
+
+  private updateDeepAnalysisLoadingState(): void {
+    this.isDeepAnalysisLoading = this.isHumanDeepAnalysisLoading || this.isMachineEvDeepAnalysisLoading;
+  }
+
+  private syncDeepAnalysisErrorState(): void {
+    if (this.humanDeepAnalysisError && this.machineEvDeepAnalysisError) {
+      this.deepAnalysisError =
+        'Não foi possível executar a análise aprofundada para os métodos humanos e para a Machine EV.';
+      return;
+    }
+
+    this.deepAnalysisError = null;
+  }
+
+  private isCurrentDeepAnalysisSnapshot(
+    requestGeneration: number,
+    requestSignature: string,
+  ): boolean {
+    return (
+      requestGeneration === this.deepAnalysisRequestGeneration
+      && requestSignature === this.buildPreRoundSnapshot().signature
+    );
+  }
+
+  private buildHypotheticalAnalyzeHandRequest(): AnalyzeHandRequest | null {
+    const dealerUpcard = this.dealerUpcard;
+    if (!dealerUpcard) {
+      return null;
+    }
+
+    const hypotheticalTableState: BlackjackTableState = {
+      ...this.tableState,
+      playerCards: [...this.playerHand],
+      dealerUpcard,
+    };
+
+    return buildAnalyzeHandRequest(hypotheticalTableState, {
+      rules: this.activeRules,
+      simulations: this.config.simulations,
+      seed: this.config.seed,
+      bankroll: this.config.bankroll,
+      minimum_bet: this.config.minimum_bet,
+      // Compatibilidade temporaria com o contrato legado de /analyze-hand.
+      risk_profile: 'moderate',
+    });
+  }
+
+  private buildHypotheticalDecisionSnapshotSignature(): string {
+    return JSON.stringify({
+      player_hand: [...this.playerHand],
+      dealer_upcard: this.dealerUpcard,
+      seen_cards: [...this.tableState.seenCards],
+      rules: this.activeRules,
+      simulations: this.config.simulations,
+      seed: this.config.seed,
+      bankroll: this.config.bankroll,
+      minimum_bet: this.config.minimum_bet,
+    });
+  }
+
+  private isCurrentHypotheticalDecisionSnapshot(
+    requestGeneration: number,
+    requestSignature: string,
+  ): boolean {
+    return (
+      requestGeneration === this.hypotheticalDecisionRequestGeneration
+      && requestSignature === this.buildHypotheticalDecisionSnapshotSignature()
+    );
+  }
+
   private buildPreRoundSnapshot(): PreRoundRequestSnapshot {
     const rules = {
       blackjack_payout: this.activeRules.blackjack_payout,
@@ -2664,6 +3166,81 @@ export class AppComponent {
     return 'Sistema classico de contagem balanceada usado como leitura baseline.';
   }
 
+  getMachineEvStatusLabel(status: string | null | undefined): string {
+    if (!status) {
+      return 'não disponível';
+    }
+
+    return status.replaceAll('_', ' ');
+  }
+
+  formatOptionalPercent(value: number | null | undefined): string {
+    if (!this.isFiniteNumber(value)) {
+      return 'não disponível';
+    }
+
+    return this.formatPercent(value);
+  }
+
+  formatOptionalCurrency(value: number | null | undefined): string {
+    if (!this.isFiniteNumber(value)) {
+      return 'não disponível';
+    }
+
+    return this.formatCurrencyOrNumber(value);
+  }
+
+  getMachineEvWarnings(machineEv: MachineEvPreRoundResponse): string[] {
+    const maybeWarnings = (machineEv as unknown as { warnings?: unknown }).warnings;
+    if (!Array.isArray(maybeWarnings)) {
+      return [];
+    }
+
+    return maybeWarnings.filter((warning): warning is string => typeof warning === 'string');
+  }
+
+  getDeepAnalysisBestHumanMethodSummary(response: PreRoundAnalysisResponse): string | null {
+    const rankedSystems = this.getFiniteHumanEdgeSystems(response);
+    if (rankedSystems.length === 0) {
+      return null;
+    }
+
+    const bestSystem = [...rankedSystems].sort((left, right) => right.estimated_player_edge - left.estimated_player_edge)[0];
+    return `${bestSystem.label}: ${this.formatSignedPercent(bestSystem.estimated_player_edge)}`;
+  }
+
+  getDeepAnalysisHumanEdgeSpreadSummary(response: PreRoundAnalysisResponse): string | null {
+    const rankedSystems = this.getFiniteHumanEdgeSystems(response);
+    if (rankedSystems.length < 2) {
+      return null;
+    }
+
+    const edges = rankedSystems.map((system) => system.estimated_player_edge);
+    const spread = Math.max(...edges) - Math.min(...edges);
+    return this.formatPercent(spread);
+  }
+
+  getDeepAnalysisMachineVsBestHumanGapSummary(
+    response: PreRoundAnalysisResponse,
+    machineEv: MachineEvPreRoundResponse,
+  ): string | null {
+    if (!this.isFiniteNumber(machineEv.estimated_next_hand_edge)) {
+      return null;
+    }
+
+    const rankedSystems = this.getFiniteHumanEdgeSystems(response);
+    if (rankedSystems.length === 0) {
+      return null;
+    }
+
+    const bestHumanEdge = Math.max(...rankedSystems.map((system) => system.estimated_player_edge));
+    return this.formatSignedPercent(machineEv.estimated_next_hand_edge - bestHumanEdge);
+  }
+
+  private getFiniteHumanEdgeSystems(response: PreRoundAnalysisResponse): PreRoundSystemResult[] {
+    return response.systems.filter((system) => this.isFiniteNumber(system.estimated_player_edge));
+  }
+
   formatSignedPercent(value: number | null | undefined): string {
     if (!this.isFiniteNumber(value)) {
       return '—';
@@ -2698,6 +3275,17 @@ export class AppComponent {
 
   getActionByName(actionName: ActionAnalysis['action']): ActionAnalysis | null {
     return this.analysisResponse?.actions?.find((action) => action.action === actionName) ?? null;
+  }
+
+  getActionByNameFromResponse(
+    response: AnalyzeHandResponse | null | undefined,
+    actionName: ActionAnalysis['action'] | null | undefined,
+  ): ActionAnalysis | null {
+    if (!response?.actions || !actionName) {
+      return null;
+    }
+
+    return response.actions.find((action) => action.action === actionName) ?? null;
   }
 
   formatRate(rate: number | null | undefined): string {

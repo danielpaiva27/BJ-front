@@ -4,6 +4,8 @@ import { PreRoundAnalysisResponse } from "./pre-round-analysis.models";
 
 export type CountingInputMode = "seen-card" | "player" | "dealer";
 
+export type CardHistoryDestination = "counting-only" | "player" | "dealer";
+
 export type LiveCountingSystemId = "hi-lo" | "hi-opt-ii" | "wong-halves";
 
 export type LiveCountingStatus = "neutral" | "favorable" | "unfavorable";
@@ -28,6 +30,10 @@ export interface LiveCountingSystemSummary {
 export interface CardHistoryEntry {
   value: CardValue;
   inputMode: CountingInputMode;
+  destination: CardHistoryDestination;
+  addedToPlayerHand: boolean;
+  addedToDealerCards: boolean;
+  sequence: number;
   timestamp: string;
 }
 

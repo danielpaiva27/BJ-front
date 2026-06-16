@@ -570,6 +570,58 @@ export function undoLastRegisteredCard(state: BlackjackTableState): UndoCardResu
   };
 }
 
+export function undoLastSeenCardRegistration(
+  state: BlackjackTableState,
+  expectedValue?: CardValue,
+): UndoCardResult {
+  let lastSeenHistoryIndex = -1;
+
+  for (let index = state.history.length - 1; index >= 0; index -= 1) {
+    const historyEntry = state.history[index];
+
+    if (historyEntry.target !== "seen") {
+      continue;
+    }
+
+    if (expectedValue !== undefined && historyEntry.value !== expectedValue) {
+      continue;
+    }
+
+    lastSeenHistoryIndex = index;
+    break;
+  }
+
+  if (lastSeenHistoryIndex < 0) {
+    return {
+      ok: false,
+      state,
+      error: expectedValue
+        ? `No seen card registration matching value ${expectedValue}.`
+        : "No seen card registration to undo.",
+    };
+  }
+
+  const entry = state.history[lastSeenHistoryIndex];
+  const withoutSeenCard = removeFromTarget(state, "seen", entry.value);
+  const seenCardWasRemoved = withoutSeenCard.seenCards.length < state.seenCards.length;
+
+  const nextState: BlackjackTableState = {
+    ...withoutSeenCard,
+    shoeCounts: seenCardWasRemoved
+      ? incrementShoeCount(withoutSeenCard.shoeCounts, entry.value)
+      : withoutSeenCard.shoeCounts,
+    history: state.history.filter((_, index) => index !== lastSeenHistoryIndex),
+  };
+
+  return {
+    ok: true,
+    state: {
+      ...nextState,
+      gamePhase: computeGamePhase(nextState),
+    },
+  };
+}
+
 export function resetRound(state: BlackjackTableState): BlackjackTableState {
   let restoredShoeCounts = state.shoeCounts;
   const restoreCards: CardValue[] = [

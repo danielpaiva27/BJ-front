@@ -694,6 +694,93 @@ h3 {
 	width: min(100%, 18rem);
 }
 
+.deep-analysis-comparison,
+.deep-analysis-machine {
+	display: grid;
+	gap: 0.7rem;
+	margin-top: 0.8rem;
+}
+
+.deep-analysis-comparison > h3,
+.deep-analysis-machine > h3 {
+	margin: 0;
+	color: var(--gold);
+}
+
+.deep-analysis-system-grid {
+	display: grid;
+	gap: 0.7rem;
+	grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.deep-analysis-system-card {
+	display: grid;
+	gap: 0.65rem;
+	min-width: 0;
+	padding: 0.8rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 48%),
+		rgba(255, 255, 255, 0.03);
+}
+
+.deep-analysis-system-card header {
+	display: flex;
+	justify-content: space-between;
+	align-items: start;
+	gap: 0.55rem;
+}
+
+.deep-analysis-system-card h4 {
+	margin: 0;
+	color: var(--cyan);
+	font-size: 1rem;
+}
+
+.deep-analysis-metrics,
+.deep-analysis-differences {
+	display: grid;
+	gap: 0.55rem;
+	grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.deep-analysis-differences p,
+.deep-analysis-metrics div {
+	display: grid;
+	gap: 0.22rem;
+	padding: 0.62rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background: rgba(255, 255, 255, 0.03);
+	margin: 0;
+}
+
+.deep-analysis-differences span,
+.deep-analysis-metrics span {
+	color: var(--muted);
+	font-size: 0.72rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.deep-analysis-differences strong,
+.deep-analysis-metrics strong {
+	color: var(--ink-strong);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+	font-size: 1rem;
+	line-height: 1.2;
+	word-break: break-word;
+}
+
+.deep-analysis-warning-list {
+	margin: 0;
+	padding-left: 1.1rem;
+	color: #ffd9a0;
+	font-size: 0.83rem;
+	line-height: 1.45;
+}
+
 .classic-round-section {
 	display: grid;
 	gap: 0.85rem;
@@ -1614,6 +1701,99 @@ button:not(:disabled):active {
 	margin-bottom: 0.75rem;
 }
 
+.counting-input-mode-panel {
+	display: grid;
+	gap: 0.38rem;
+	margin-bottom: 0.75rem;
+	padding: 0.72rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 46%),
+		rgba(255, 255, 255, 0.03);
+}
+
+.counting-input-mode-label {
+	color: var(--muted);
+	font-size: 0.74rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.counting-input-mode-buttons {
+	margin-bottom: 0;
+}
+
+.counting-undo-panel,
+.counting-history-panel {
+	display: grid;
+	gap: 0.38rem;
+	margin-bottom: 0.75rem;
+	padding: 0.72rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius);
+	background:
+		linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 46%),
+		rgba(255, 255, 255, 0.03);
+}
+
+.counting-undo-actions {
+	grid-template-columns: minmax(0, 1fr);
+	gap: 0;
+}
+
+.counting-history-label {
+	color: var(--muted);
+	font-size: 0.74rem;
+	font-weight: 900;
+	text-transform: uppercase;
+}
+
+.counting-history-list {
+	display: grid;
+	gap: 0.28rem;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.counting-history-list li {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.42rem 0.5rem;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.04);
+	font-size: 0.82rem;
+}
+
+.counting-history-list li strong {
+	color: var(--ink-strong);
+	font-family: "Arial Black", "Trebuchet MS", sans-serif;
+}
+
+.counting-history-list li span {
+	color: var(--muted);
+	font-weight: 800;
+}
+
+.hypothetical-hand-status {
+	font-weight: 900;
+}
+
+.hypothetical-hand-status.incomplete {
+	color: var(--warning);
+}
+
+.hypothetical-hand-status.ready {
+	color: var(--green);
+}
+
+.hypothetical-hand-status.bust {
+	color: var(--danger);
+}
+
 .seen-cards-strip,
 .hand-cards {
 	display: flex;
@@ -1846,6 +2026,17 @@ button:not(:disabled):active {
 
 .recommended-decision {
 	gap: 0.9rem;
+}
+
+.hypothetical-analysis-result {
+	display: grid;
+	gap: 0.8rem;
+	margin-top: 0.75rem;
+}
+
+.hypothetical-analysis-result > h3 {
+	margin: 0;
+	color: var(--gold);
 }
 
 .recommendation-hero {

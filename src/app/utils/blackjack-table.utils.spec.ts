@@ -15,6 +15,7 @@ import {
   shouldDealerHit,
   startNewRoundKeepingShoe,
   transitionGuidedRoundPhase,
+  undoLastSeenCardRegistration,
   undoLastRegisteredCard,
 } from "./blackjack-table.utils";
 
@@ -120,6 +121,32 @@ describe("blackjack-table.utils", () => {
     expect(undone.state.seenCards).toEqual([]);
     expect(undone.state.history.length).toBe(1);
     expect(undone.state.shoeCounts.find((item) => item.value === "9")?.count).toBe(4);
+  });
+
+  it("undoes the latest seen-card registration even when it is not the latest global history entry", () => {
+    const state = createInitialTableState(1);
+    const withSeen = registerCardAction(state, "2", "seen").state;
+    const withPlayer = registerCardAction(withSeen, "10", "player").state;
+
+    const undoneSeen = undoLastSeenCardRegistration(withPlayer);
+
+    expect(undoneSeen.ok).toBeTrue();
+    expect(undoneSeen.state.seenCards).toEqual([]);
+    expect(undoneSeen.state.playerCards).toEqual(["10"]);
+    expect(undoneSeen.state.history.map((entry) => entry.target)).toEqual(["player"]);
+    expect(undoneSeen.state.shoeCounts.find((item) => item.value === "2")?.count).toBe(4);
+    expect(undoneSeen.state.shoeCounts.find((item) => item.value === "10")?.count).toBe(15);
+  });
+
+  it("returns an error when no seen-card registration is available to undo", () => {
+    const state = createInitialTableState(1);
+    const withPlayer = registerCardAction(state, "10", "player").state;
+
+    const undoneSeen = undoLastSeenCardRegistration(withPlayer);
+
+    expect(undoneSeen.ok).toBeFalse();
+    expect(undoneSeen.error).toContain("No seen card registration");
+    expect(undoneSeen.state).toBe(withPlayer);
   });
 
   it("resets current round and keeps shoe depletion", () => {

@@ -305,6 +305,24 @@
           <p>Clicar cartas vistas atualiza o shoe e a contagem em tempo real.</p>
         </div>
 
+        <div class="counting-input-mode-panel">
+          <span class="counting-input-mode-label">Modo de entrada</span>
+          <div class="target-panel counting-input-mode-buttons" role="group" aria-label="Modo de entrada de cartas">
+            <button
+              type="button"
+              class="target-button"
+              *ngFor="let mode of countingInputModes"
+              [class.active]="inputMode === mode"
+              [attr.aria-pressed]="inputMode === mode"
+              [attr.title]="getCountingInputModeButtonTitle(mode)"
+              (click)="selectCountingInputMode(mode)"
+            >
+              {{ countingInputModeLabels[mode] }}
+            </button>
+          </div>
+          <small class="field-hint">{{ countingInputModeHint }}</small>
+        </div>
+
         <div class="stat-item seen-card-summary">
           <span>Cartas já vistas registradas</span>
           <div class="seen-cards-strip" [class.empty]="tableState.seenCards.length === 0">
@@ -315,6 +333,35 @@
               <strong>Nenhuma carta registrada</strong>
             </ng-template>
           </div>
+        </div>
+
+        <div class="counting-undo-panel">
+          <div class="game-actions-grid counting-undo-actions">
+            <button
+              type="button"
+              class="control-button"
+              aria-label="Desfazer ultima carta de contagem"
+              [disabled]="!canUndoLastCountingCard"
+              [attr.title]="undoLastCountingCardTitle"
+              (click)="undoLastCountingCardRegistration()"
+            >
+              Desfazer última carta
+            </button>
+          </div>
+          <small class="field-hint">{{ lastCountingCardSummary }}</small>
+        </div>
+
+        <div class="counting-history-panel">
+          <span class="counting-history-label">Últimas cartas</span>
+          <ul class="counting-history-list" *ngIf="recentCountingCardHistory.length > 0; else noCountingHistory">
+            <li *ngFor="let entry of recentCountingCardHistory">
+              <strong>{{ entry.value }}</strong>
+              <span>{{ getCardHistoryDestinationLabel(entry) }}</span>
+            </li>
+          </ul>
+          <ng-template #noCountingHistory>
+            <small class="field-hint">Histórico vazio.</small>
+          </ng-template>
         </div>
 
         <p class="theoretical-note" *ngIf="preRoundAnalysisNeedsRefresh && currentRoundPhase === 'SEEN_CARDS_SETUP'">
@@ -376,29 +423,117 @@
           <div class="stat-item">
             <span>Jogador</span>
             <strong>{{ playerHand.length > 0 ? playerHand.join(', ') : 'nenhuma carta' }}</strong>
-            <small *ngIf="playerHand.length > 0">Total: {{ playerTotal }}{{ isPlayerBust ? ' - bust' : '' }}</small>
+            <small *ngIf="playerHand.length > 0">Total do jogador: {{ playerTotal }}</small>
+            <small *ngIf="playerHand.length > 0">Tipo de mão: {{ hypotheticalPlayerHandTypeLabel }}</small>
+            <small class="hypothetical-hand-status" [ngClass]="hypotheticalHandStatus">
+              Status: {{ hypotheticalHandStatusLabel }}
+            </small>
+            <small *ngIf="isPlayerBust">Jogador estourou</small>
           </div>
           <div class="stat-item">
             <span>Dealer</span>
-            <strong>{{ countingDashboardState.dealerCards.length > 0 ? countingDashboardState.dealerCards.join(', ') : 'nenhuma carta' }}</strong>
-            <small *ngIf="dealerUpcard">Upcard: {{ dealerUpcard }}</small>
+            <strong>{{ hypotheticalDealerCards.length > 0 ? hypotheticalDealerCards.join(', ') : 'nenhuma carta' }}</strong>
+            <small *ngIf="dealerUpcard">Carta aberta do dealer: {{ dealerUpcard }}</small>
           </div>
         </div>
 
         <div class="game-actions-grid">
-          <button type="button" class="control-button" (click)="resetHypotheticalHand()">Limpar mãos</button>
+          <button
+            type="button"
+            class="control-button"
+            aria-label="Limpar mãos hipotéticas"
+            title="Limpa apenas a situação hipotética, sem alterar a contagem."
+            (click)="resetHypotheticalHand()"
+          >
+            Limpar mãos
+          </button>
           <button
             type="button"
             class="action-button"
             aria-label="Analisar decisao hipotetica"
-            disabled
+            [disabled]="!canAnalyzeHypotheticalDecision || isDecisionAnalysisLoading"
+            [attr.title]="hypotheticalDecisionActionTitle"
+            (click)="onAnalyzeHypotheticalDecision()"
           >
-            Analisar decisão
+            {{ isDecisionAnalysisLoading ? 'Analisando...' : 'Analisar decisão' }}
           </button>
         </div>
 
         <p class="theoretical-note">
-          A análise de decisão só será conectada quando houver mão hipotética válida.
+          {{ hypotheticalDecisionReadinessText }}
+        </p>
+
+        <p class="loading" *ngIf="isDecisionAnalysisLoading">Processando simulação da mão hipotética...</p>
+        <p class="error" *ngIf="decisionAnalysisError">{{ decisionAnalysisError }}</p>
+
+        <div class="hypothetical-analysis-result" *ngIf="decisionAnalysis as response">
+          <h3>Última análise da mão hipotética</h3>
+
+          <p class="theoretical-note" *ngIf="isDecisionAnalysisStale">
+            Resultado desatualizado: as cartas vistas mudaram depois da última análise.
+          </p>
+
+          <div class="recommended-decision" *ngIf="response.recommendation as recommendation">
+            <div class="recommendation-hero">
+              <span class="recommendation-label">Ação recomendada</span>
+              <strong>{{ getActionDisplay(recommendation.best_action) }}</strong>
+            </div>
+
+            <div class="recommendation-metrics">
+              <div>
+                <span>EV <app-info-tooltip termKey="expectedValue" /></span>
+                <strong [class]="getExpectedValueClass(getActionByNameFromResponse(response, recommendation.best_action)?.ev)">
+                  {{ formatExpectedValue(getActionByNameFromResponse(response, recommendation.best_action)?.ev) }}
+                </strong>
+              </div>
+              <div>
+                <span>Confiança <app-info-tooltip termKey="simulationConfidence" /></span>
+                <strong>{{ formatRate(recommendation.confidence) }}</strong>
+              </div>
+            </div>
+
+            <p class="recommendation-explanation" *ngIf="recommendation.explanation">
+              {{ recommendation.explanation }}
+            </p>
+          </div>
+
+          <div class="table-scroll" *ngIf="response.actions && response.actions.length > 0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ação</th>
+                  <th>Valor esperado <app-info-tooltip termKey="expectedValue" /></th>
+                  <th>Vitória <app-info-tooltip termKey="winRate" /></th>
+                  <th>Derrota <app-info-tooltip termKey="loseRate" /></th>
+                  <th>Empate <app-info-tooltip termKey="pushRate" /></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  *ngFor="let action of response.actions; let index = index"
+                  [class.best-action-row]="action.action === response.recommendation?.best_action"
+                >
+                  <td>
+                    <span class="ranking-position">{{ formatRankingPosition(index) }}</span>
+                    {{ getActionDisplay(action.action) }}
+                  </td>
+                  <td [class]="getExpectedValueClass(action.ev)">
+                    {{ formatExpectedValue(action.ev) }}
+                  </td>
+                  <td>{{ formatRate(action.win_rate) }}</td>
+                  <td>{{ formatRate(action.lose_rate) }}</td>
+                  <td>{{ formatRate(action.push_rate) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <p class="theoretical-note">
+          Limpar mãos: remove apenas a situação hipotética.
+        </p>
+        <p class="theoretical-note">
+          Desfazer última carta: corrige a última carta registrada na contagem.
         </p>
       </section>
 
@@ -409,17 +544,115 @@
           <p>Compare Hi-Lo, Hi-Opt II, Wong Halves e Machine EV quando você pedir.</p>
         </div>
 
-        <button
-          type="button"
-          class="action-button"
-          aria-label="Executar analise aprofundada"
-          disabled
-        >
-          Análise aprofundada
-        </button>
+        <div class="game-actions-grid">
+          <button
+            type="button"
+            class="action-button"
+            aria-label="Executar analise aprofundada"
+            [disabled]="isDeepAnalysisLoading"
+            [attr.title]="deepAnalysisActionTitle"
+            (click)="onRunDeepAnalysis()"
+          >
+            {{ isDeepAnalysisLoading ? 'Analisando...' : 'Análise aprofundada' }}
+          </button>
+        </div>
 
         <p class="theoretical-note">
-          Placeholder visual: Machine EV não roda automaticamente nesta área.
+          Machine EV só roda sob demanda quando você clica em Análise aprofundada.
+        </p>
+
+        <p class="theoretical-note" *ngIf="isDeepAnalysisStale">
+          Resultado desatualizado. Execute a análise novamente para o shoe atual.
+        </p>
+
+        <p class="loading" *ngIf="isHumanDeepAnalysisLoading">Consultando Hi-Lo, Hi-Opt II e Wong Halves...</p>
+        <p class="loading" *ngIf="isMachineEvDeepAnalysisLoading">Calculando estimativa pública da Machine EV...</p>
+
+        <p class="error" *ngIf="deepAnalysisError">{{ deepAnalysisError }}</p>
+        <p class="error" *ngIf="humanDeepAnalysisError">{{ humanDeepAnalysisError }}</p>
+        <p class="error" *ngIf="machineEvDeepAnalysisError">{{ machineEvDeepAnalysisError }}</p>
+
+        <div class="deep-analysis-comparison" *ngIf="deepAnalysis as humanAnalysis">
+          <h3>Métodos humanos</h3>
+          <p class="theoretical-note">
+            Comparativo sob demanda com métricas públicas para leitura probabilística educativa.
+          </p>
+
+          <div class="deep-analysis-differences">
+            <p *ngIf="getDeepAnalysisBestHumanMethodSummary(humanAnalysis) as bestSummary">
+              <span>Maior edge entre métodos humanos</span>
+              <strong>{{ bestSummary }}</strong>
+            </p>
+            <p *ngIf="getDeepAnalysisHumanEdgeSpreadSummary(humanAnalysis) as spreadSummary">
+              <span>Amplitude de edge (máximo - mínimo)</span>
+              <strong>{{ spreadSummary }}</strong>
+            </p>
+            <p
+              *ngIf="
+                deepAnalysisMachineEv
+                && getDeepAnalysisMachineVsBestHumanGapSummary(humanAnalysis, deepAnalysisMachineEv) as gapSummary
+              "
+            >
+              <span>Diferença da Machine EV vs melhor método humano</span>
+              <strong>{{ gapSummary }}</strong>
+            </p>
+          </div>
+
+          <div class="deep-analysis-system-grid">
+            <article class="deep-analysis-system-card" *ngFor="let system of humanAnalysis.systems">
+              <header>
+                <h4>{{ system.label }}</h4>
+                <span class="pre-round-status" [ngClass]="getPreRoundStatusClass(system.recommendation_status)">
+                  {{ getPreRoundStatusLabel(system.recommendation_status) }}
+                </span>
+              </header>
+
+              <div class="deep-analysis-metrics">
+                <div><span>Running Count</span><strong>{{ system.running_count | number: '1.0-2' }}</strong></div>
+                <div><span>True Count</span><strong>{{ system.true_count | number: '1.2-4' }}</strong></div>
+                <div><span>Vantagem estimada</span><strong>{{ formatSignedPercent(system.estimated_player_edge) }}</strong></div>
+                <div><span>Risco da aposta mínima</span><strong>{{ formatOptionalPercent(system.risk_if_minimum_bet) }}</strong></div>
+                <div>
+                  <span>Banca necessária (aposta mínima)</span>
+                  <strong>{{ formatOptionalCurrency(system.minimum_bankroll_required_for_minimum_bet) }}</strong>
+                </div>
+              </div>
+
+              <ul class="deep-analysis-warning-list" *ngIf="system.warnings && system.warnings.length > 0">
+                <li *ngFor="let warning of system.warnings">{{ warning }}</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+
+        <div class="deep-analysis-machine" *ngIf="deepAnalysisMachineEv as machineEv">
+          <h3>Machine EV</h3>
+          <p class="theoretical-note">
+            Estimativa pública conservadora baseada na composição real do shoe.
+          </p>
+
+          <div class="deep-analysis-metrics">
+            <div><span>Vantagem estimada da próxima mão</span><strong>{{ formatSignedPercent(machineEv.estimated_next_hand_edge) }}</strong></div>
+            <div><span>Risco da aposta mínima</span><strong>{{ formatOptionalPercent(machineEv.risk_if_minimum_bet) }}</strong></div>
+            <div>
+              <span>Banca necessária para a aposta mínima</span>
+              <strong>{{ formatOptionalCurrency(machineEv.minimum_bankroll_required_for_minimum_bet) }}</strong>
+            </div>
+            <div><span>Status do método</span><strong>{{ getMachineEvStatusLabel(machineEv.recommendation_status) }}</strong></div>
+          </div>
+
+          <ul class="deep-analysis-warning-list" *ngIf="getMachineEvWarnings(machineEv).length > 0">
+            <li *ngFor="let warning of getMachineEvWarnings(machineEv)">{{ warning }}</li>
+          </ul>
+
+          <p class="theoretical-note">{{ machineEv.recommendation_text }}</p>
+        </div>
+
+        <p
+          class="theoretical-note"
+          *ngIf="!hasDeepAnalysisResults && !isDeepAnalysisLoading && !deepAnalysisError && !humanDeepAnalysisError && !machineEvDeepAnalysisError"
+        >
+          Execute a análise aprofundada para comparar Hi-Lo, Hi-Opt II, Wong Halves e Machine EV.
         </p>
       </section>
 
@@ -427,7 +660,7 @@
         <div class="classic-round-heading">
           <p class="section-kicker">Secundário</p>
           <h2 id="classic-round-title">Modo clássico de rodada</h2>
-          <p>Fluxo antigo preservado para compatibilidade enquanto a experiência counting-first evolui.</p>
+          <p>Fluxo antigo preservado para compatibilidade. A experiência principal continua sendo o painel counting-first.</p>
         </div>
 
         <div class="classic-round-grid">
@@ -439,7 +672,7 @@
 
         <div class="section-heading">
           <h3>Análise pré-rodada</h3>
-          <p>Compara sistemas de contagem e sugere exposição com base na banca simulada.</p>
+          <p>Comparativo probabilístico do fluxo clássico para referência de compatibilidade.</p>
         </div>
 
         <div class="game-actions-grid">
@@ -473,7 +706,7 @@
               <span class="machine-ev-kicker">Modelo computacional</span>
               <h3 id="machine-ev-title">Machine EV</h3>
               <p id="machine-ev-description">
-                Estimativa probabilística baseada na composição real do shoe.
+                Estimativa pública conservadora baseada na composição real do shoe.
               </p>
             </div>
             <div class="machine-ev-badges">
